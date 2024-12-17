@@ -3,21 +3,14 @@ use egui_plot::{Line, Plot, PlotPoints};
 use mlua::prelude::{LuaFunction, LuaResult};
 use std::sync::{Arc, RwLock};
 
-struct UIButton {
-    label: String,
-    handler: LuaFunction,
-}
-
-struct UIPlot {
-    label: String,
-    data: Vec<f64>,
-    handler: LuaFunction,
+enum UIComponent {
+    Button { label: String, handler: LuaFunction },
+    Plot { label: String, handler: LuaFunction },
 }
 pub struct MyApp {
     lua_engine: Arc<LuaEngine>,
     script_input: String,
-    buttons: Arc<RwLock<Vec<UIButton>>>,
-    plots: Arc<RwLock<Vec<UIPlot>>>,
+    components: Arc<RwLock<Vec<UIComponent>>>,
 }
 
 impl MyApp {
@@ -26,44 +19,42 @@ impl MyApp {
 
         // Register UI components (buttons, labels, etc.) in Lua
         let globals = lua.globals();
-        let buttons = Arc::new(RwLock::new(Vec::new()));
-        let plots = Arc::new(RwLock::new(Vec::new()));
+        let components: Arc<RwLock<Vec<UIComponent>>> = Arc::new(RwLock::new(Vec::new()));
         // Register add_button in Lua
-        let buttons_clone = Arc::clone(&buttons);
+        let components_clone = Arc::clone(&components);
         let add_button = lua
             .create_function(move |lua_ctx, (label, handler): (String, LuaFunction)| {
-                let mut buttons = buttons_clone.write().unwrap();
+                let mut buttons = components_clone.write().unwrap();
                 println!("Button added: {}", label);
-                buttons.push(UIButton { label, handler });
+                buttons.push(UIComponent::Button { label, handler });
                 Ok(())
             })
             .unwrap();
-        globals.set("add_button", add_button).unwrap();
+        globals.set("button", add_button).unwrap();
         // Register add_plot in Lua
-        let plots_clone = Arc::clone(&plots);
+        let components_clone = Arc::clone(&components);
         let add_plot = lua
             .create_function(move |lua_ctx, (label, handler): (String, LuaFunction)| {
-                let mut plots = plots_clone.write().unwrap();
+                let mut plots = components_clone.write().unwrap();
                 println!("Plot added: {}", label);
-                let result: LuaResult<Vec<f64>> = handler.call(());
-                if let Ok(data) = result {
-                    plots.push(UIPlot {
-                        label,
-                        data,
-                        handler,
-                    });
-                } else if let Err(err) = result {
-                    eprintln!("Error generating plot data: {}", err);
-                }
+                plots.push(UIComponent::Plot { label, handler });
                 Ok(())
             })
             .unwrap();
-        globals.set("add_plot", add_plot).unwrap();
+        globals.set("plot", add_plot).unwrap();
+        let components_clone = Arc::clone(&components);
+        let reset_components = lua
+            .create_function(move |_, ()| {
+                let mut components = components_clone.write().unwrap();
+                components.clear();
+                Ok(())
+            })
+            .unwrap();
+        globals.set("reset", reset_components).unwrap();
         Self {
             lua_engine,
             script_input: String::new(),
-            buttons,
-            plots,
+            components,
         }
     }
 }
@@ -71,31 +62,30 @@ impl MyApp {
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            // Render all buttons
             {
-                let buttons = self.buttons.read().unwrap();
-                for button in buttons.iter() {
-                    if ui.button(&button.label).clicked() {
-                        if let Err(err) = &button.handler.call::<()>(()) {
-                            eprintln!("Error calling Lua handler: {}", err);
-                        }
-                    }
-                }
-            }
-            // Render all plots
-            {
-                let plots = self.plots.read().unwrap();
-                for plot in plots.iter() {
-                    Plot::new(&plot.label)
-                        .view_aspect(2.0) // Aspect ratio
-                        .show(ui, |plot_ui| {
-                            let result: LuaResult<Vec<f64>> = plot.handler.call(());
-                            if let Ok(data) = result {
-                                plot_ui.line(Line::new(PlotPoints::from_ys_f64(&data)));
-                            } else if let Err(err) = result {
-                                eprintln!("Error generating plot data: {}", err);
+                let components = self.components.read().unwrap();
+                for component in components.iter() {
+                    match component {
+                        UIComponent::Button { label, handler } => {
+                            if ui.button(label).clicked() {
+                                if let Err(err) = &handler.call::<()>(()) {
+                                    eprintln!("Error calling Lua handler: {}", err);
+                                }
                             }
-                        });
+                        }
+                        UIComponent::Plot { label, handler } => {
+                            Plot::new(label)
+                                .view_aspect(2.0) // Aspect ratio
+                                .show(ui, |plot_ui| {
+                                    let result: LuaResult<Vec<f64>> = handler.call(());
+                                    if let Ok(data) = result {
+                                        plot_ui.line(Line::new(PlotPoints::from_ys_f64(&data)));
+                                    } else if let Err(err) = result {
+                                        eprintln!("Error generating plot data: {}", err);
+                                    }
+                                });
+                        }
+                    };
                 }
             }
             // Multi-line input for Lua script
