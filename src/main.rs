@@ -1,4 +1,3 @@
-use eframe::egui;
 use std::sync::{Arc, RwLock};
 mod core;
 mod lua_engine;
@@ -17,5 +16,13 @@ fn main() -> eframe::Result<()> {
 
     // Run the UI
     let options = eframe::NativeOptions::default();
-    eframe::run_native("Space Business 5", options, Box::new(|_cc| Ok(Box::new(MyApp::new(lua_engine)))))
+    let app = MyApp::new(lua_engine.clone());
+    if let Err(err) = lua_engine.lua.load("require('init')").exec() {
+        eprintln!("Unable to load init.lua due to lua error: {}", err);
+    }
+    eframe::run_native(
+        "Space Business 5",
+        options,
+        Box::new(|_cc| Ok(Box::new(app))),
+    )
 }
