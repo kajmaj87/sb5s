@@ -12,12 +12,18 @@ fn main() -> eframe::Result<()> {
     let core = Arc::new(RwLock::new(Core::new()));
 
     // Create the Lua Engine, exposing the core API to Lua
-    let lua_engine = Arc::new(LuaEngine::new(core));
+    let lua_engine = Arc::new(RwLock::new(LuaEngine::new(core)));
 
     // Run the UI
     let options = eframe::NativeOptions::default();
     let app = MyApp::new(lua_engine.clone());
-    if let Err(err) = lua_engine.lua.load("require('init')").exec() {
+    if let Err(err) = lua_engine
+        .write()
+        .unwrap()
+        .lua
+        .load("require('init')")
+        .exec()
+    {
         eprintln!("Unable to load init.lua due to lua error: {}", err);
     }
     eframe::run_native(
