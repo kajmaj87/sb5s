@@ -1,0 +1,8 @@
+[package]
+name = "lua_engine"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { path = "../core" }
+mlua = { version = "0.10.2", features = ["luau"] }

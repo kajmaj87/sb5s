@@ -1,4 +1,4 @@
-use crate::core::Core;
+use core::core::Core;
 use mlua::prelude::*;
 use std::sync::{Arc, RwLock};
 

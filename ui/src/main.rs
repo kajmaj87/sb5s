@@ -1,10 +1,8 @@
 use std::sync::{Arc, RwLock};
-mod core;
-mod lua_engine;
 mod ui;
 
-use core::Core;
-use lua_engine::LuaEngine;
+use core::core::Core;
+use lua_engine::lua_engine::LuaEngine;
 use ui::MyApp;
 
 fn main() -> eframe::Result<()> {

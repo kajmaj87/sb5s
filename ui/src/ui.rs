@@ -1,6 +1,6 @@
-use crate::lua_engine::LuaEngine;
 use egui::Window;
 use egui_plot::{Line, Plot, PlotPoints};
+use lua_engine::lua_engine::LuaEngine;
 use mlua::prelude::LuaFunction;
 use std::sync::{Arc, RwLock, RwLockWriteGuard};
 
