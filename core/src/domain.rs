@@ -1,4 +1,4 @@
-mod entity;
+pub(crate) mod entity;
 pub(crate) mod event;
 mod service;
-mod value_object;
+pub(crate) mod value_object;
