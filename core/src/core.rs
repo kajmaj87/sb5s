@@ -1,4 +1,4 @@
-pub struct Core {
+struct Core {
     pub agents: Vec<String>,
 }
 
