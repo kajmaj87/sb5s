@@ -105,7 +105,7 @@ impl MyApp {
             let add_window = lua
                 .create_function(move |_, (label, child_func): (String, LuaFunction)| {
                     let mut children = Vec::new(); // Temporary list to store components inside this window
-                                                   // Call the Lua function to define components inside the window
+                    // Call the Lua function to define components inside the window
                     {
                         let mut components_lock = components_clone.write().unwrap();
                         std::mem::swap(&mut children, &mut *components_lock);
@@ -220,7 +220,9 @@ impl MyApp {
                     && ctx.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.ctrl))
                     || ui.button("Run (Ctrl + Enter)").clicked()
                 {
-                    lua_engine.run_script(&script);
+                    if let Err(e) = lua_engine.run_script(&script) {
+                        eprintln!("Error running Lua script: {}", e);
+                    }
                 }
             }
         }

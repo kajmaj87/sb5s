@@ -1,5 +1,4 @@
 mod api;
-mod core;
 mod domain;
 mod infrastructure;
 mod repo;

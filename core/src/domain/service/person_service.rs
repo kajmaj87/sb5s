@@ -3,7 +3,7 @@ use crate::domain::entity::person::PersonId;
 use crate::domain::event::person_event::PersonEvent;
 use crate::domain::event::DomainEvent;
 use crate::domain::value_object::location::Location;
-use crate::infrastructure::publish_event;
+use crate::infrastructure::event_store::publish_event;
 use crate::repo::Repository;
 use std::sync::mpsc::Sender;
 

@@ -1,13 +1,13 @@
 use std::sync::{Arc, RwLock};
 mod ui;
 
-use core::core::Core;
+use core::CoreApi;
 use lua_engine::lua_engine::LuaEngine;
 use ui::MyApp;
 
 fn main() -> eframe::Result<()> {
     // Create the Rust Core
-    let core = Arc::new(RwLock::new(Core::new()));
+    let core = Arc::new(RwLock::new(CoreApi::new()));
 
     // Create the Lua Engine, exposing the core API to Lua
     let lua_engine = Arc::new(RwLock::new(LuaEngine::new(core)));

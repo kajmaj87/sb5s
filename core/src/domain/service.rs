@@ -1,1 +1,1 @@
-mod person_service;
+pub(crate) mod person_service;

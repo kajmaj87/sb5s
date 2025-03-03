@@ -1,4 +1,4 @@
-mod location_occupancy;
+pub(crate) mod location_occupancy;
 
 use crate::domain::event::DomainEvent;
 use crate::infrastructure::event_store::EventStore;

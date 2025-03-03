@@ -1,4 +1,2 @@
-mod event_store;
-mod projection;
-
-pub(crate) use event_store::publish_event;
+pub(crate) mod event_store;
+pub(crate) mod projection;
