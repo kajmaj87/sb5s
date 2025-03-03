@@ -7,11 +7,12 @@ edition = "2024"
 core = { path = "../core" }
 lua_engine = { path = "../lua_engine" }
 # maybe it would be good to get rid of this dependency and use a wrapper in lua_engine
-mlua = { version = "0.10.2", features = ["luau"] }
-egui = "0.29"
-egui_plot = "0.29"
-eframe = { version = "0.29", default-features = false, features = [
+mlua = { version = "0.10.3", features = ["luau"] }
+egui = "0.31.0"
+egui_plot = "0.31.0"
+eframe = { version = "0.31.0", default-features = false, features = [
     "default_fonts", # Embed the default egui fonts.
     "glow", # Use the glow rendering backend. Alternative: "wgpu".
     "persistence", # Enable restoring app state when restarting the app.
+    "x11"
 ] }

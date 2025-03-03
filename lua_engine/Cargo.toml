@@ -5,4 +5,4 @@ edition = "2024"
 
 [dependencies]
 core = { path = "../core" }
-mlua = { version = "0.10.2", features = ["luau"] }
+mlua = { version = "0.10.3", features = ["luau"] }
