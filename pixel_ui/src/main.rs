@@ -9,7 +9,7 @@ const TILE_SIZE: f32 = 32.0;
 // Size of each tile in your tileset image (in pixels)
 const SOURCE_TILE_SIZE: f32 = 16.0;
 
-const ZOOM_SPEED: f32 = 0.3;
+const ZOOM_SPEED: f32 = 1.3;
 const ZOOM_MIN: f32 = 0.02;
 const ZOOM_MAX: f32 = 10.0;
 const DRAG_THRESHOLD: f32 = 5.0; // Pixels of movement needed to start a drag
@@ -17,7 +17,7 @@ const SELECTED_TILE_ZOOM: f32 = 8.0; // Zoom for the tile preview
 
 // Number of frames to average for the FPS display
 const FPS_HISTORY_SIZE: usize = 60; // 60 frames = 1 second at 60 FPS
-const BENCHMARK_MAP_SIZE: usize = 2; // Size of the map for benchmarking
+const BENCHMARK_MAP_SIZE: usize = 20; // Size of the map for benchmarking
 #[derive(Clone)]
 struct Tile {
     id: usize,
@@ -62,33 +62,74 @@ impl TileMap {
             initial_height: height,
         }
     }
+    fn draw(&self, selected_pos: Option<(i32, i32)>, camera_pos: Vec2, zoom: f32) {
+        // Calculate the visible area in world coordinates
+        let visible_world_width = screen_width() / zoom;
+        let visible_world_height = screen_height() / zoom;
 
-    fn draw(&self, selected_pos: Option<(i32, i32)>) {
-        for (&(x, y), tile) in &self.tiles {
-            // Calculate source rectangle based on actual tileset dimensions
-            let tiles_per_row = (self.tileset.width() / SOURCE_TILE_SIZE).floor() as f32;
-            let src_x = (tile.id as f32 % tiles_per_row) * SOURCE_TILE_SIZE;
-            let src_y = (tile.id as f32 / tiles_per_row).floor() * SOURCE_TILE_SIZE;
+        // Calculate the visible area in tile coordinates
+        let min_tile_x = ((camera_pos.x - visible_world_width / 2.0) / TILE_SIZE).floor() as i32;
+        let min_tile_y = ((camera_pos.y - visible_world_height / 2.0) / TILE_SIZE).floor() as i32;
+        let max_tile_x = ((camera_pos.x + visible_world_width / 2.0) / TILE_SIZE).ceil() as i32;
+        let max_tile_y = ((camera_pos.y + visible_world_height / 2.0) / TILE_SIZE).ceil() as i32;
 
-            // Determine if this is the selected tile
-            let is_selected = selected_pos.map_or(false, |(sel_x, sel_y)| x == sel_x && y == sel_y);
+        // Add a buffer around the visible area to prevent pop-in when moving
+        let buffer = 2;
 
-            // Draw the tile with MAGENTA color if selected, otherwise WHITE
-            let color = if is_selected { MAGENTA } else { WHITE };
+        // Count how many tiles we're drawing for diagnostics
+        let mut tiles_drawn = 0;
 
-            // Draw the tile
-            draw_texture_ex(
-                &self.tileset,
-                x as f32 * TILE_SIZE,
-                y as f32 * TILE_SIZE,
-                color,
-                DrawTextureParams {
-                    source: Some(Rect::new(src_x, src_y, SOURCE_TILE_SIZE, SOURCE_TILE_SIZE)),
-                    dest_size: Some(Vec2::new(TILE_SIZE, TILE_SIZE)),
-                    ..Default::default()
-                },
-            );
+        // Only draw tiles that are within the visible area (plus buffer)
+        for x in (min_tile_x - buffer)..=(max_tile_x + buffer) {
+            for y in (min_tile_y - buffer)..=(max_tile_y + buffer) {
+                if let Some(tile) = self.tiles.get(&(x, y)) {
+                    tiles_drawn += 1;
+
+                    // Calculate source rectangle based on actual tileset dimensions
+                    let tiles_per_row = (self.tileset.width() / SOURCE_TILE_SIZE).floor() as f32;
+                    let src_x = (tile.id as f32 % tiles_per_row) * SOURCE_TILE_SIZE;
+                    let src_y = (tile.id as f32 / tiles_per_row).floor() * SOURCE_TILE_SIZE;
+
+                    // Determine if this is the selected tile
+                    let is_selected =
+                        selected_pos.map_or(false, |(sel_x, sel_y)| x == sel_x && y == sel_y);
+                    let color = if is_selected { MAGENTA } else { WHITE };
+
+                    // Draw the tile
+                    draw_texture_ex(
+                        &self.tileset,
+                        x as f32 * TILE_SIZE,
+                        y as f32 * TILE_SIZE,
+                        color,
+                        DrawTextureParams {
+                            source: Some(Rect::new(
+                                src_x,
+                                src_y,
+                                SOURCE_TILE_SIZE,
+                                SOURCE_TILE_SIZE,
+                            )),
+                            dest_size: Some(Vec2::new(TILE_SIZE, TILE_SIZE)),
+                            ..Default::default()
+                        },
+                    );
+                }
+            }
         }
+
+        // Display culling statistics
+        set_default_camera();
+        draw_text(
+            &format!(
+                "Visible tiles: {}/{} ({:.1}%)",
+                tiles_drawn,
+                self.tiles.len(),
+                100.0 * tiles_drawn as f32 / self.tiles.len() as f32
+            ),
+            10.0,
+            90.0,
+            20.0,
+            BLUE,
+        );
     }
 
     // Draw the selected tile preview in the upper right corner
@@ -297,7 +338,12 @@ async fn main() {
             };
 
             // Apply zoom change
-            zoom += wheel_y * ZOOM_SPEED;
+            if wheel_y > 0.0 {
+                zoom /= ZOOM_SPEED;
+            } else {
+                zoom *= ZOOM_SPEED;
+            }
+            println!("Zoom: {}, wheel_y {}", zoom, wheel_y);
             // Clamp zoom to reasonable values
             zoom = zoom.clamp(ZOOM_MIN, ZOOM_MAX);
 
@@ -324,9 +370,8 @@ async fn main() {
             ..Default::default()
         });
 
-        // Draw tilemap with selected tile
-        tilemap.draw(selected_pos);
-
+        // Draw tilemap with selected tile, passing camera parameters
+        tilemap.draw(selected_pos, camera_pos, zoom);
         // Only highlight hovering tiles when not dragging
         if !is_dragging {
             // Get tile coordinates under mouse
