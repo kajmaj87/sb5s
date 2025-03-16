@@ -921,6 +921,7 @@ struct GameState {
     last_frame_time: f64,
     ui_state: UIState,
     character_textures: Vec<Texture2D>,
+    last_person_pos: Option<Vec2>,
 }
 
 impl GameState {
@@ -979,6 +980,7 @@ impl GameState {
             last_frame_time: get_time(),
             ui_state: UIState::TileCreation, // Default state
             character_textures,
+            last_person_pos: None,
         }
     }
 
@@ -1033,14 +1035,54 @@ impl GameState {
                 }
             }
             UIState::PeopleCreation => {
-                // Handle person creation on right-click
-                if is_mouse_button_pressed(MouseButton::Right) {
-                    self.add_person_at_tile(hover_pos);
+                // Handle person creation with dragging - now purely distance-based
+                if is_mouse_button_down(MouseButton::Right) {
+                    // Check if we've moved enough since last person creation
+                    let should_create = match self.last_person_pos {
+                        Some(last_pos) => {
+                            // Only create if we've moved at least 1/4 of a tile
+                            let distance = (mouse_world_pos - last_pos).length();
+                            distance > TILE_SIZE * 0.25
+                        }
+                        None => true, // Always create first person
+                    };
+
+                    if should_create {
+                        // Add a person directly at mouse position
+                        self.add_person_at_position(hover_pos, mouse_world_pos);
+                        self.last_person_pos = Some(mouse_world_pos);
+                    }
+                } else if is_mouse_button_released(MouseButton::Right) {
+                    // Reset when mouse button is released
+                    self.last_person_pos = None;
                 }
             }
         }
     }
+    fn add_person_at_position(&mut self, tile_pos: TilePosition, world_pos: Vec2) {
+        // Only add person if tile exists
+        if self.map.get_tile(&tile_pos).is_some() {
+            if !self.character_textures.is_empty() {
+                let texture_index = rand::gen_range(0, self.character_textures.len());
+                let texture = self.character_textures[texture_index].clone();
 
+                // Random direction
+                let random_dir = match rand::gen_range(0, 4) {
+                    0 => Direction::Up,
+                    1 => Direction::Down,
+                    2 => Direction::Left,
+                    _ => Direction::Right,
+                };
+
+                // Create person and set position directly to mouse position
+                let mut person = Person::new(tile_pos.x, tile_pos.y, random_dir, texture);
+                person.position = world_pos;
+
+                // Add to people list
+                self.people.push(person);
+            }
+        }
+    }
     fn add_person_at_tile(&mut self, tile_pos: TilePosition) {
         // Verify that this is a valid tile position
         if self.map.get_tile(&tile_pos).is_some() {
