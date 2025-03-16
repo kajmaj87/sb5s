@@ -3,7 +3,6 @@ use crate::repo::{NumericId, Repository};
 #[derive(Debug)]
 pub(crate) enum VecRepositoryError {
     NotFound,
-    InvalidIndex,
 }
 
 pub(crate) struct VecRepository<ID: NumericId, T> {
