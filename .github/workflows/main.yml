@@ -1,0 +1,118 @@
+name: Build Binaries
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+          - stable
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust }}
+          components: rustfmt,clippy
+          override: true
+      - uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ runner.os }}-cargo-check-step
+      - name: Clippy and Test
+        run: |
+          cargo clippy --workspace -- -D warnings
+          cargo test --workspace
+
+  build:
+    name: Build ${{ matrix.binary }} for ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        binary: [pixel_ui, ui]
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: recursive
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      # Use cache to speed up builds
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ runner.os }}-cargo-build-${{ matrix.binary }}
+
+      # Install Linux dependencies if on Ubuntu
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxi-dev libgl1-mesa-dev libasound2-dev
+
+      # Build the specified binary
+      - name: Build ${{ matrix.binary }}
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --package ${{ matrix.binary }}
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_HEAD_REF: ${{ github.head_ref }}
+
+      # Prepare artifacts with the correct extension for each OS
+      - name: Prepare artifacts (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          mkdir -p artifacts
+          cp target/release/${{ matrix.binary }} artifacts/
+          cp -r assets artifacts/
+
+      - name: Prepare artifacts (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          mkdir -p artifacts
+          cp target/release/${{ matrix.binary }}.exe artifacts/
+          cp -r assets artifacts/
+
+      # Upload artifacts
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.binary }}-${{ matrix.os }}
+          path: artifacts/
+
+  notify:
+    name: Notify
+    runs-on: ubuntu-latest
+    needs: [check, build]  # notify job depends on check and build jobs
+    steps:
+      - name: Notify success on Discord
+        uses: Ilshidur/action-discord@0.3.2
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_SUCCESS }}
+        with:
+          args: |
+            Build succeeded! :white_check_mark:
+            Commit Message: "${{ github.event.head_commit.message }}"
+            Artifacts: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            Status: ${{ job.status }}
+

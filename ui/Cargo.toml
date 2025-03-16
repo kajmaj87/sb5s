@@ -1,5 +1,5 @@
 [package]
-name = "sb5s"
+name = "sb5s-egui"
 version = "0.1.0"
 edition = "2024"
 

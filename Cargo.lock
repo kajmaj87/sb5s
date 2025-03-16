@@ -1784,13 +1784,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b3cff922bd51709b605d9ead9aa71031d81447142d828eb4a6eba76fe619f9b"
 
 [[package]]
-name = "pixel_ui"
-version = "0.1.0"
-dependencies = [
- "macroquad",
-]
-
-[[package]]
 name = "pkg-config"
 version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1955,7 +1948,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sb5s"
+name = "sb5s-egui"
 version = "0.1.0"
 dependencies = [
  "core",
@@ -1964,6 +1957,13 @@ dependencies = [
  "egui_plot",
  "lua_engine",
  "mlua",
+]
+
+[[package]]
+name = "sb5s-pixel"
+version = "0.1.0"
+dependencies = [
+ "macroquad",
 ]
 
 [[package]]
