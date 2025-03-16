@@ -1,52 +1,100 @@
 use macroquad::prelude::*;
-use std::collections::HashMap;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
-// Size of tiles when rendered on screen
-const TILE_SIZE: f32 = 32.0;
+// Constants
+mod config {
+    pub const TILE_SIZE: f32 = 32.0;
+    pub const SOURCE_TILE_SIZE: f32 = 16.0;
+    pub const ZOOM_SPEED: f32 = 1.3;
+    pub const ZOOM_MIN: f32 = 0.02;
+    pub const ZOOM_MAX: f32 = 5.0;
+    pub const DRAG_THRESHOLD: f32 = 5.0;
+    pub const SELECTED_TILE_ZOOM: f32 = 8.0;
+    pub const FPS_HISTORY_SIZE: usize = 60;
+    pub const BENCHMARK_MAP_SIZE: usize = 5;
+    pub const CAMERA_SPEED: f32 = 5.0;
+    pub const TILE_BUFFER: i32 = 2;
+}
 
-// Size of each tile in your tileset image (in pixels)
-const SOURCE_TILE_SIZE: f32 = 16.0;
-
-const ZOOM_SPEED: f32 = 1.3;
-const ZOOM_MIN: f32 = 0.02;
-const ZOOM_MAX: f32 = 5.0;
-const DRAG_THRESHOLD: f32 = 5.0; // Pixels of movement needed to start a drag
-const SELECTED_TILE_ZOOM: f32 = 8.0; // Zoom for the tile preview
-
-// Number of frames to average for the FPS display
-const FPS_HISTORY_SIZE: usize = 60; // 60 frames = 1 second at 60 FPS
-const BENCHMARK_MAP_SIZE: usize = 20; // Size of the map for benchmarking
+use config::*;
 
 #[derive(Clone)]
 struct Tile {
     id: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TilePosition {
+    x: i32,
+    y: i32,
+}
+
+impl TilePosition {
+    fn new(x: i32, y: i32) -> Self {
+        Self { x, y }
+    }
+
+    fn from_world_pos(world_pos: Vec2) -> Self {
+        let tile_x = (world_pos.x / TILE_SIZE).floor() as i32;
+        let tile_y = (world_pos.y / TILE_SIZE).floor() as i32;
+        Self {
+            x: tile_x,
+            y: tile_y,
+        }
+    }
+
+    fn to_world_pos(&self) -> Vec2 {
+        Vec2::new(self.x as f32 * TILE_SIZE, self.y as f32 * TILE_SIZE)
+    }
+}
+
+struct MapBounds {
+    min_x: i32,
+    min_y: i32,
+    max_x: i32,
+    max_y: i32,
+}
+
+impl MapBounds {
+    fn new(min_x: i32, min_y: i32, max_x: i32, max_y: i32) -> Self {
+        Self {
+            min_x,
+            min_y,
+            max_x,
+            max_y,
+        }
+    }
+
+    fn expand_to_include(&mut self, pos: &TilePosition) {
+        self.min_x = self.min_x.min(pos.x);
+        self.min_y = self.min_y.min(pos.y);
+        self.max_x = self.max_x.max(pos.x);
+        self.max_y = self.max_y.max(pos.y);
+    }
+
+    fn as_tuple(&self) -> (i32, i32, i32, i32) {
+        (self.min_x, self.min_y, self.max_x, self.max_y)
+    }
+}
+
 struct TileMap {
-    // Use a HashMap to store tiles at arbitrary positions
     tiles: HashMap<(i32, i32), Tile>,
     tileset: Texture2D,
-
-    // Keep track of the initial dimensions for camera setup
-    initial_width: usize,
-    initial_height: usize,
-
-    // Track how many tiles are currently being drawn (for statistics)
     visible_tiles_count: usize,
+    bounds: MapBounds,
+    tiles_per_row: f32,
 }
 
 impl TileMap {
     async fn new() -> Self {
-        // Load tileset texture - will panic if file doesn't exist
         let tileset = load_texture("tileset.png").await.unwrap();
         tileset.set_filter(FilterMode::Nearest);
 
+        let tiles_per_row = (tileset.width() / SOURCE_TILE_SIZE).floor() as f32;
         let width = 16;
         let height = 16;
         let mut tiles = HashMap::new();
 
-        // Add some variety to the map
         for y in 0..height * BENCHMARK_MAP_SIZE {
             for x in 0..width * BENCHMARK_MAP_SIZE {
                 tiles.insert(
@@ -58,64 +106,84 @@ impl TileMap {
             }
         }
 
+        let bounds = MapBounds::new(
+            0,
+            0,
+            (width * BENCHMARK_MAP_SIZE - 1) as i32,
+            (height * BENCHMARK_MAP_SIZE - 1) as i32,
+        );
+
         Self {
             tiles,
             tileset,
-            initial_width: width,
-            initial_height: height,
             visible_tiles_count: 0,
+            bounds,
+            tiles_per_row,
         }
     }
 
-    fn draw(&mut self, selected_pos: Option<(i32, i32)>, camera_pos: Vec2, zoom: f32) {
-        // Calculate the visible area in world coordinates
-        let visible_world_width = screen_width() / zoom;
-        let visible_world_height = screen_height() / zoom;
+    fn get_visible_range(&self, camera: &CameraController) -> (i32, i32, i32, i32) {
+        let visible_world_width = screen_width() / camera.zoom;
+        let visible_world_height = screen_height() / camera.zoom;
 
-        // Calculate the visible area in tile coordinates
-        let min_tile_x = ((camera_pos.x - visible_world_width / 2.0) / TILE_SIZE).floor() as i32;
-        let min_tile_y = ((camera_pos.y - visible_world_height / 2.0) / TILE_SIZE).floor() as i32;
-        let max_tile_x = ((camera_pos.x + visible_world_width / 2.0) / TILE_SIZE).ceil() as i32;
-        let max_tile_y = ((camera_pos.y + visible_world_height / 2.0) / TILE_SIZE).ceil() as i32;
+        let min_tile_x =
+            ((camera.position.x - visible_world_width / 2.0) / TILE_SIZE).floor() as i32;
+        let min_tile_y =
+            ((camera.position.y - visible_world_height / 2.0) / TILE_SIZE).floor() as i32;
+        let max_tile_x =
+            ((camera.position.x + visible_world_width / 2.0) / TILE_SIZE).ceil() as i32;
+        let max_tile_y =
+            ((camera.position.y + visible_world_height / 2.0) / TILE_SIZE).ceil() as i32;
 
-        // Add a buffer around the visible area to prevent pop-in when moving
-        let buffer = 2;
+        // Clamp to map bounds
+        let min_x = min_tile_x.max(self.bounds.min_x).min(self.bounds.max_x);
+        let min_y = min_tile_y.max(self.bounds.min_y).min(self.bounds.max_y);
+        let max_x = max_tile_x.max(self.bounds.min_x).min(self.bounds.max_x);
+        let max_y = max_tile_y.max(self.bounds.min_y).min(self.bounds.max_y);
 
-        // Count how many tiles we're drawing for diagnostics
-        self.visible_tiles_count = 0;
+        (min_x, min_y, max_x, max_y)
+    }
 
-        // Sort tiles by texture region to minimize texture switches
-        let mut tiles_by_id: Vec<((i32, i32), &Tile)> = Vec::new();
+    fn draw(&mut self, camera: &CameraController, selected_pos: Option<&TilePosition>) {
+        let (min_x, min_y, max_x, max_y) = self.get_visible_range(camera);
 
-        // Only collect tiles that are within the visible area (plus buffer)
-        for x in (min_tile_x - buffer)..=(max_tile_x + buffer) {
-            for y in (min_tile_y - buffer)..=(max_tile_y + buffer) {
+        // Skip drawing if nothing is visible
+        if max_x < min_x || max_y < min_y {
+            self.visible_tiles_count = 0;
+            return;
+        }
+
+        // Collect visible tiles
+        let mut tiles_to_draw = Vec::new();
+        for x in (min_x - TILE_BUFFER).max(self.bounds.min_x)
+            ..=(max_x + TILE_BUFFER).min(self.bounds.max_x)
+        {
+            for y in (min_y - TILE_BUFFER).max(self.bounds.min_y)
+                ..=(max_y + TILE_BUFFER).min(self.bounds.max_y)
+            {
                 if let Some(tile) = self.tiles.get(&(x, y)) {
-                    tiles_by_id.push(((x, y), tile));
-                    self.visible_tiles_count += 1;
+                    tiles_to_draw.push((TilePosition::new(x, y), tile));
                 }
             }
         }
 
-        // Sort by tile ID for better batching
-        tiles_by_id.sort_by_key(|(_, tile)| tile.id);
+        // Sort by ID for better rendering efficiency
+        tiles_to_draw.sort_by_key(|(_, tile)| tile.id);
+        self.visible_tiles_count = tiles_to_draw.len();
 
-        // Draw the tiles
-        for ((x, y), tile) in tiles_by_id {
-            // Calculate source rectangle based on actual tileset dimensions
-            let tiles_per_row = (self.tileset.width() / SOURCE_TILE_SIZE).floor() as f32;
-            let src_x = (tile.id as f32 % tiles_per_row) * SOURCE_TILE_SIZE;
-            let src_y = (tile.id as f32 / tiles_per_row).floor() * SOURCE_TILE_SIZE;
+        // Draw tiles
+        for (pos, tile) in tiles_to_draw {
+            let src_x = (tile.id as f32 % self.tiles_per_row) * SOURCE_TILE_SIZE;
+            let src_y = (tile.id as f32 / self.tiles_per_row).floor() * SOURCE_TILE_SIZE;
 
-            // Determine if this is the selected tile
-            let is_selected = selected_pos.map_or(false, |(sel_x, sel_y)| x == sel_x && y == sel_y);
+            let is_selected =
+                selected_pos.map_or(false, |sel_pos| pos.x == sel_pos.x && pos.y == sel_pos.y);
             let color = if is_selected { MAGENTA } else { WHITE };
 
-            // Draw the tile
             draw_texture_ex(
                 &self.tileset,
-                x as f32 * TILE_SIZE,
-                y as f32 * TILE_SIZE,
+                pos.x as f32 * TILE_SIZE,
+                pos.y as f32 * TILE_SIZE,
                 color,
                 DrawTextureParams {
                     source: Some(Rect::new(src_x, src_y, SOURCE_TILE_SIZE, SOURCE_TILE_SIZE)),
@@ -124,33 +192,282 @@ impl TileMap {
                 },
             );
         }
-
-        // No longer drawing statistics here - moved to main loop
     }
 
-    // Get visible tiles count for statistics
-    fn get_visible_tiles_count(&self) -> usize {
-        self.visible_tiles_count
+    fn get_tile(&self, pos: &TilePosition) -> Option<&Tile> {
+        self.tiles.get(&(pos.x, pos.y))
     }
 
-    // Draw the selected tile preview in the upper right corner
-    fn draw_selected_tile_preview(&self, selected_pos: Option<(i32, i32)>) {
+    fn place_tile(&mut self, pos: &TilePosition, tile_id: usize) {
+        self.tiles.insert((pos.x, pos.y), Tile { id: tile_id });
+        self.bounds.expand_to_include(pos);
+    }
+
+    fn get_initial_center(&self) -> Vec2 {
+        Vec2::new(
+            (self.bounds.max_x as f32 + self.bounds.min_x as f32) * TILE_SIZE / 2.0,
+            (self.bounds.max_y as f32 + self.bounds.min_y as f32) * TILE_SIZE / 2.0,
+        )
+    }
+}
+
+struct CameraController {
+    position: Vec2,
+    zoom: f32,
+}
+
+impl CameraController {
+    fn new(position: Vec2) -> Self {
+        Self {
+            position,
+            zoom: 1.0,
+        }
+    }
+
+    fn update(&mut self, input: &InputManager) {
+        // Handle keyboard movement
+        if input.is_direction_pressed() {
+            let move_speed = CAMERA_SPEED / self.zoom;
+            if input.is_up_pressed() {
+                self.position.y -= move_speed;
+            }
+            if input.is_down_pressed() {
+                self.position.y += move_speed;
+            }
+            if input.is_left_pressed() {
+                self.position.x -= move_speed;
+            }
+            if input.is_right_pressed() {
+                self.position.x += move_speed;
+            }
+        }
+
+        // Handle drag movement
+        if let Some(drag_delta) = input.get_drag_delta() {
+            self.position.x -= drag_delta.x / self.zoom;
+            self.position.y -= drag_delta.y / self.zoom;
+        }
+
+        // Handle zoom
+        if let Some(zoom_delta) = input.get_zoom_delta() {
+            // Store pre-zoom mouse world position
+            let pre_zoom_pos = self.screen_to_world(input.get_mouse_position());
+
+            // Apply zoom
+            if zoom_delta < 0.0 {
+                self.zoom /= ZOOM_SPEED;
+            } else {
+                self.zoom *= ZOOM_SPEED;
+            }
+            self.zoom = self.zoom.clamp(ZOOM_MIN, ZOOM_MAX);
+
+            // Get post-zoom mouse world position
+            let post_zoom_pos = self.screen_to_world(input.get_mouse_position());
+
+            // Adjust to keep world position under cursor
+            self.position.x += pre_zoom_pos.x - post_zoom_pos.x;
+            self.position.y += pre_zoom_pos.y - post_zoom_pos.y;
+        }
+    }
+
+    fn get_macroquad_camera(&self) -> Camera2D {
+        Camera2D {
+            target: self.position,
+            zoom: Vec2::new(
+                self.zoom * 2.0 / screen_width(),
+                self.zoom * 2.0 / screen_height(),
+            ),
+            ..Default::default()
+        }
+    }
+
+    fn screen_to_world(&self, screen_pos: Vec2) -> Vec2 {
+        self.get_macroquad_camera().screen_to_world(screen_pos)
+    }
+
+    fn apply(&self) {
+        set_camera(&self.get_macroquad_camera());
+    }
+}
+
+struct InputManager {
+    mouse_position: Vec2,
+    prev_mouse_position: Vec2,
+    is_dragging: bool,
+    drag_start_position: Vec2,
+    mouse_moved_during_click: bool,
+    zoom_delta: Option<f32>,
+    last_painted_pos: Option<TilePosition>,
+}
+
+impl InputManager {
+    fn new() -> Self {
+        let initial_pos = Vec2::new(mouse_position().0, mouse_position().1);
+        Self {
+            mouse_position: initial_pos,
+            prev_mouse_position: initial_pos,
+            is_dragging: false,
+            drag_start_position: initial_pos,
+            mouse_moved_during_click: false,
+            zoom_delta: None,
+            last_painted_pos: None,
+        }
+    }
+    fn update(&mut self) {
+        self.prev_mouse_position = self.mouse_position;
+        self.mouse_position = Vec2::new(mouse_position().0, mouse_position().1);
+        self.zoom_delta = if mouse_wheel().1 != 0.0 {
+            Some(mouse_wheel().1)
+        } else {
+            None
+        };
+
+        // Handle mouse button press/release
+        if is_mouse_button_pressed(MouseButton::Left) {
+            self.drag_start_position = self.mouse_position;
+            self.is_dragging = false;
+            self.mouse_moved_during_click = false;
+        }
+
+        // Check for drag while mouse is down
+        if is_mouse_button_down(MouseButton::Left) {
+            if !self.is_dragging {
+                let delta = self.mouse_position - self.drag_start_position;
+                let distance = delta.length();
+
+                if distance > DRAG_THRESHOLD {
+                    self.is_dragging = true;
+                    self.mouse_moved_during_click = true;
+                }
+            }
+        } else {
+            // If left button is not down, we're not dragging
+            self.is_dragging = false;
+        }
+    }
+    // Changed to return the frame-by-frame delta for smooth movement
+    fn is_direction_pressed(&self) -> bool {
+        is_key_down(KeyCode::W)
+            || is_key_down(KeyCode::Up)
+            || is_key_down(KeyCode::S)
+            || is_key_down(KeyCode::Down)
+            || is_key_down(KeyCode::A)
+            || is_key_down(KeyCode::Left)
+            || is_key_down(KeyCode::D)
+            || is_key_down(KeyCode::Right)
+    }
+
+    fn is_up_pressed(&self) -> bool {
+        is_key_down(KeyCode::W) || is_key_down(KeyCode::Up)
+    }
+
+    fn is_down_pressed(&self) -> bool {
+        is_key_down(KeyCode::S) || is_key_down(KeyCode::Down)
+    }
+
+    fn is_left_pressed(&self) -> bool {
+        is_key_down(KeyCode::A) || is_key_down(KeyCode::Left)
+    }
+
+    fn is_right_pressed(&self) -> bool {
+        is_key_down(KeyCode::D) || is_key_down(KeyCode::Right)
+    }
+
+    fn should_select_tile(&self) -> bool {
+        is_mouse_button_released(MouseButton::Left) && !self.mouse_moved_during_click
+    }
+
+    fn should_place_tile(&self, selected_pos: Option<&TilePosition>) -> bool {
+        is_mouse_button_down(MouseButton::Right) && selected_pos.is_some()
+    }
+
+    fn get_drag_delta(&self) -> Option<Vec2> {
+        if self.is_dragging {
+            Some(self.mouse_position - self.prev_mouse_position)
+        } else {
+            None
+        }
+    }
+
+    fn get_zoom_delta(&self) -> Option<f32> {
+        self.zoom_delta
+    }
+
+    fn get_mouse_position(&self) -> Vec2 {
+        self.mouse_position
+    }
+
+    fn can_place_at(&mut self, pos: TilePosition) -> bool {
+        if self.last_painted_pos != Some(pos) {
+            self.last_painted_pos = Some(pos);
+            true
+        } else {
+            false
+        }
+    }
+}
+
+struct UI {
+    fps_history: VecDeque<i32>,
+}
+
+impl UI {
+    fn new() -> Self {
+        Self {
+            fps_history: VecDeque::with_capacity(FPS_HISTORY_SIZE),
+        }
+    }
+
+    fn update(&mut self) {
+        let current_fps = get_fps();
+        self.fps_history.push_back(current_fps);
+        if self.fps_history.len() > FPS_HISTORY_SIZE {
+            self.fps_history.pop_front();
+        }
+    }
+
+    fn draw_hover_info(&self, hover_pos: &TilePosition, map: &TileMap) {
+        if let Some(tile) = map.get_tile(hover_pos) {
+            draw_text(
+                &format!("Hover: ({}, {}) ID: {}", hover_pos.x, hover_pos.y, tile.id),
+                10.0,
+                30.0,
+                20.0,
+                WHITE,
+            );
+        } else {
+            draw_text(
+                &format!("Hover: ({}, {}) [Empty]", hover_pos.x, hover_pos.y),
+                10.0,
+                30.0,
+                20.0,
+                WHITE,
+            );
+        }
+    }
+
+    fn draw_selected_tile_info(&self, selected_pos: Option<&TilePosition>, map: &TileMap) {
         if let Some(pos) = selected_pos {
-            if let Some(tile) = self.tiles.get(&pos) {
-                // Switch to screen space
-                set_default_camera();
+            if let Some(tile) = map.get_tile(pos) {
+                draw_text(
+                    &format!("Selected: ({}, {}) ID: {}", pos.x, pos.y, tile.id),
+                    10.0,
+                    60.0,
+                    20.0,
+                    RED,
+                );
+            }
+        }
+    }
 
-                // Calculate source rectangle
-                let tiles_per_row = (self.tileset.width() / SOURCE_TILE_SIZE).floor() as f32;
-                let src_x = (tile.id as f32 % tiles_per_row) * SOURCE_TILE_SIZE;
-                let src_y = (tile.id as f32 / tiles_per_row).floor() * SOURCE_TILE_SIZE;
-
-                // Calculate position in upper right corner
+    fn draw_selected_tile_preview(&self, selected_pos: Option<&TilePosition>, map: &TileMap) {
+        if let Some(pos) = selected_pos {
+            if let Some(tile) = map.get_tile(pos) {
                 let preview_size = TILE_SIZE * SELECTED_TILE_ZOOM;
                 let pos_x = screen_width() - preview_size - 20.0;
                 let pos_y = 20.0;
 
-                // Draw background
+                // Background
                 draw_rectangle(
                     pos_x - 10.0,
                     pos_y - 10.0,
@@ -159,9 +476,12 @@ impl TileMap {
                     Color::new(0.0, 0.0, 0.0, 0.7),
                 );
 
-                // Draw the enlarged tile
+                // Tile image
+                let src_x = (tile.id as f32 % map.tiles_per_row) * SOURCE_TILE_SIZE;
+                let src_y = (tile.id as f32 / map.tiles_per_row).floor() * SOURCE_TILE_SIZE;
+
                 draw_texture_ex(
-                    &self.tileset,
+                    &map.tileset,
                     pos_x,
                     pos_y,
                     WHITE,
@@ -172,10 +492,10 @@ impl TileMap {
                     },
                 );
 
-                // Draw a border
+                // Border
                 draw_rectangle_lines(pos_x, pos_y, preview_size, preview_size, 2.0, RED);
 
-                // Draw tile info below the preview
+                // Tile info
                 draw_text(
                     &format!("Tile ID: {}", tile.id),
                     pos_x,
@@ -187,202 +507,14 @@ impl TileMap {
         }
     }
 
-    // Get map coordinates under mouse position
-    fn get_tile_coords_at(&self, world_pos: Vec2) -> (i32, i32) {
-        let tile_x = (world_pos.x / TILE_SIZE).floor() as i32;
-        let tile_y = (world_pos.y / TILE_SIZE).floor() as i32;
-        (tile_x, tile_y)
-    }
-
-    // Place a tile at the given coordinates
-    fn place_tile(&mut self, pos: (i32, i32), tile_id: usize) {
-        self.tiles.insert(pos, Tile { id: tile_id });
-    }
-}
-
-#[macroquad::main("Tilemap Example")]
-async fn main() {
-    let mut tilemap = TileMap::new().await;
-
-    // Camera state
-    let mut camera_pos = Vec2::new(
-        (tilemap.initial_width as f32 * TILE_SIZE) / 2.0,
-        (tilemap.initial_height as f32 * TILE_SIZE) / 2.0,
-    );
-    let mut zoom = 1.0;
-    let camera_speed = 5.0;
-
-    // Mouse drag variables
-    let mut is_dragging = false;
-    let mut drag_start_position = Vec2::new(0.0, 0.0);
-
-    // Track selected tile position
-    let mut selected_pos: Option<(i32, i32)> = None;
-
-    // Track whether mouse moved during a click (for drag vs. click detection)
-    let mut mouse_moved_during_click = false;
-
-    // Track the last tile position where we placed a tile during drag-painting
-    // This helps avoid placing the same tile multiple times
-    let mut last_painted_pos: Option<(i32, i32)> = None;
-
-    // For tracking FPS history to calculate average
-    let mut fps_history: VecDeque<i32> = VecDeque::with_capacity(FPS_HISTORY_SIZE);
-
-    loop {
-        clear_background(BLACK);
-
-        // Camera controls using keyboard
-        if is_key_down(KeyCode::W) || is_key_down(KeyCode::Up) {
-            camera_pos.y -= camera_speed / zoom;
-        }
-        if is_key_down(KeyCode::S) || is_key_down(KeyCode::Down) {
-            camera_pos.y += camera_speed / zoom;
-        }
-        if is_key_down(KeyCode::A) || is_key_down(KeyCode::Left) {
-            camera_pos.x -= camera_speed / zoom;
-        }
-        if is_key_down(KeyCode::D) || is_key_down(KeyCode::Right) {
-            camera_pos.x += camera_speed / zoom;
-        }
-
-        // Mouse click/drag handling (Left button)
-        if is_mouse_button_pressed(MouseButton::Left) {
-            // When mouse is first pressed, we don't know if it's a drag or click yet
-            drag_start_position = Vec2::new(mouse_position().0, mouse_position().1);
-            is_dragging = false;
-            mouse_moved_during_click = false;
-        }
-
-        // While button is held, check if it's a drag
-        if is_mouse_button_down(MouseButton::Left) {
-            let current_mouse_position = Vec2::new(mouse_position().0, mouse_position().1);
-            let delta = current_mouse_position - drag_start_position;
-            let distance = (delta.x * delta.x + delta.y * delta.y).sqrt();
-
-            // If mouse moved beyond threshold, it's a drag
-            if distance > DRAG_THRESHOLD {
-                is_dragging = true;
-                mouse_moved_during_click = true;
-
-                // Move camera for drag
-                camera_pos.x -= delta.x / zoom;
-                camera_pos.y -= delta.y / zoom;
-
-                // Update drag start position for continuous dragging
-                drag_start_position = current_mouse_position;
-            }
-        }
-
-        // Create the camera once and use it for both rendering and coordinate conversion
-        let camera = Camera2D {
-            target: camera_pos,
-            zoom: Vec2::new(zoom * 2.0 / screen_width(), zoom * 2.0 / screen_height()),
-            ..Default::default()
-        };
-
-        // Set the camera for rendering
-        set_camera(&camera);
-
-        // Get mouse position in world coordinates using the same camera
-        let mouse_screen_pos = mouse_position();
-        let screen_pos = Vec2::new(mouse_screen_pos.0, mouse_screen_pos.1);
-        let mouse_world_pos = camera.screen_to_world(screen_pos);
-
-        // When left mouse is released, handle selection if it wasn't a drag
-        if is_mouse_button_released(MouseButton::Left) && !mouse_moved_during_click {
-            let tile_coords = tilemap.get_tile_coords_at(mouse_world_pos);
-            if tilemap.tiles.contains_key(&tile_coords) {
-                selected_pos = Some(tile_coords);
-            }
-        }
-
-        // Reset last painted position when right mouse button is released
-        if is_mouse_button_released(MouseButton::Right) {
-            last_painted_pos = None;
-        }
-
-        // Right mouse button: place selected tile (now handles continuous painting)
-        if is_mouse_button_down(MouseButton::Right) && selected_pos.is_some() {
-            let tile_coords = tilemap.get_tile_coords_at(mouse_world_pos);
-
-            // Only place a tile if we haven't placed one at this position yet
-            // or if we're at a different position than last frame
-            if last_painted_pos != Some(tile_coords) {
-                if let Some(selected_coords) = selected_pos {
-                    if let Some(selected_tile) = tilemap.tiles.get(&selected_coords) {
-                        let tile_id = selected_tile.id;
-                        tilemap.place_tile(tile_coords, tile_id);
-                        last_painted_pos = Some(tile_coords);
-                    }
-                }
-            }
-        }
-
-        if is_mouse_button_released(MouseButton::Left) {
-            is_dragging = false;
-        }
-
-        // Zoom controls
-        let wheel_y = mouse_wheel().1;
-        if wheel_y != 0.0 {
-            // Get the mouse position in world coordinates before zooming
-            let mouse_world_pos_before = camera.screen_to_world(screen_pos);
-
-            // Apply zoom change
-            if wheel_y > 0.0 {
-                zoom /= ZOOM_SPEED;
-            } else {
-                zoom *= ZOOM_SPEED;
-            }
-            // Clamp zoom to reasonable values
-            zoom = zoom.clamp(ZOOM_MIN, ZOOM_MAX);
-            println!("Zoom: {}, wheel_y {}", zoom, wheel_y);
-
-            // Create updated camera with new zoom
-            let updated_camera = Camera2D {
-                target: camera_pos,
-                zoom: Vec2::new(zoom * 2.0 / screen_width(), zoom * 2.0 / screen_height()),
-                ..Default::default()
-            };
-
-            // Get the mouse position in world coordinates after zooming
-            let mouse_world_pos_after = updated_camera.screen_to_world(screen_pos);
-
-            // Adjust camera position to keep the world position under the cursor
-            camera_pos.x += mouse_world_pos_before.x - mouse_world_pos_after.x;
-            camera_pos.y += mouse_world_pos_before.y - mouse_world_pos_after.y;
-        }
-
-        // Draw tilemap with selected tile
-        tilemap.draw(selected_pos, camera_pos, zoom);
-
-        // Only highlight hovering tiles when not dragging
-        if !is_dragging {
-            // Get tile coordinates under mouse
-            let tile_coords = tilemap.get_tile_coords_at(mouse_world_pos);
-
-            // Draw a rectangle outline around the hovered tile position
-            draw_rectangle_lines(
-                tile_coords.0 as f32 * TILE_SIZE,
-                tile_coords.1 as f32 * TILE_SIZE,
-                TILE_SIZE,
-                TILE_SIZE,
-                2.0,
-                YELLOW,
-            );
-        }
-
-        // Switch to default camera for UI elements
-        set_default_camera();
-
-        // Draw tile culling statistics (moved from tilemap.draw)
+    fn draw_stats(&self, map: &TileMap, camera: &CameraController) {
+        // Culling stats
         draw_text(
             &format!(
                 "Visible tiles: {}/{} ({:.1}%)",
-                tilemap.get_visible_tiles_count(),
-                tilemap.tiles.len(),
-                100.0 * tilemap.get_visible_tiles_count() as f32 / tilemap.tiles.len() as f32
+                map.visible_tiles_count,
+                map.tiles.len(),
+                100.0 * map.visible_tiles_count as f32 / map.tiles.len() as f32
             ),
             10.0,
             90.0,
@@ -390,48 +522,29 @@ async fn main() {
             BLUE,
         );
 
-        // Draw hover info
-        if !is_dragging {
-            let tile_coords = tilemap.get_tile_coords_at(mouse_world_pos);
-            if let Some(tile) = tilemap.tiles.get(&tile_coords) {
-                draw_text(
-                    &format!(
-                        "Hover: ({}, {}) ID: {}",
-                        tile_coords.0, tile_coords.1, tile.id
-                    ),
-                    10.0,
-                    30.0,
-                    20.0,
-                    WHITE,
-                );
-            } else {
-                draw_text(
-                    &format!("Hover: ({}, {}) [Empty]", tile_coords.0, tile_coords.1),
-                    10.0,
-                    30.0,
-                    20.0,
-                    WHITE,
-                );
-            }
-        }
+        // Zoom level
+        draw_text(
+            &format!("Zoom: {:.3}", camera.zoom),
+            10.0,
+            120.0,
+            20.0,
+            SKYBLUE,
+        );
 
-        // Draw selected tile info (if any)
-        if let Some(pos) = selected_pos {
-            if let Some(tile) = tilemap.tiles.get(&pos) {
-                draw_text(
-                    &format!("Selected: ({}, {}) ID: {}", pos.0, pos.1, tile.id),
-                    10.0,
-                    60.0,
-                    20.0,
-                    RED,
-                );
-            }
-        }
+        // Map bounds
+        let bounds = map.bounds.as_tuple();
+        draw_text(
+            &format!(
+                "Map bounds: ({}, {}) to ({}, {})",
+                bounds.0, bounds.1, bounds.2, bounds.3
+            ),
+            10.0,
+            150.0,
+            20.0,
+            GREEN,
+        );
 
-        // Draw the selected tile preview in upper right corner
-        tilemap.draw_selected_tile_preview(selected_pos);
-
-        // Draw instructions in screen space
+        // Instructions
         draw_text(
             "WASD/Arrows: move, Mouse wheel: zoom, Left-click drag: pan, Left-click: select, Right-click/drag: place tiles",
             10.0,
@@ -440,18 +553,12 @@ async fn main() {
             WHITE,
         );
 
-        // Update FPS history and calculate average
-        let current_fps = get_fps();
-        fps_history.push_back(current_fps);
-        if fps_history.len() > FPS_HISTORY_SIZE {
-            fps_history.pop_front();
-        }
-
-        let avg_fps: f32 = fps_history.iter().sum::<i32>() as f32 / fps_history.len() as f32;
-
-        // Draw FPS counter with current and average in bottom right corner
-        let fps_text = format!("FPS: {} (Avg: {:.1})", current_fps, avg_fps);
+        // FPS counter
+        let avg_fps: f32 =
+            self.fps_history.iter().sum::<i32>() as f32 / self.fps_history.len().max(1) as f32;
+        let fps_text = format!("FPS: {} (Avg: {:.1})", get_fps(), avg_fps);
         let fps_text_width = measure_text(&fps_text, None, 20, 1.0).width;
+
         draw_text(
             &fps_text,
             screen_width() - fps_text_width - 10.0,
@@ -459,7 +566,104 @@ async fn main() {
             20.0,
             GREEN,
         );
+    }
 
+    fn draw_tile_highlight(&self, pos: &TilePosition) {
+        let world_pos = pos.to_world_pos();
+        draw_rectangle_lines(world_pos.x, world_pos.y, TILE_SIZE, TILE_SIZE, 2.0, YELLOW);
+    }
+}
+
+struct GameState {
+    map: TileMap,
+    camera: CameraController,
+    input: InputManager,
+    ui: UI,
+    selected_pos: Option<TilePosition>,
+}
+
+impl GameState {
+    async fn new() -> Self {
+        let map = TileMap::new().await;
+        let camera = CameraController::new(map.get_initial_center());
+
+        Self {
+            map,
+            camera,
+            input: InputManager::new(),
+            ui: UI::new(),
+            selected_pos: None,
+        }
+    }
+
+    fn update(&mut self) {
+        self.input.update();
+        self.camera.update(&self.input);
+        self.ui.update();
+
+        // Convert mouse position to world coordinates
+        let mouse_world_pos = self.camera.screen_to_world(self.input.get_mouse_position());
+        let hover_pos = TilePosition::from_world_pos(mouse_world_pos);
+
+        // Handle tile selection
+        if self.input.should_select_tile() {
+            if self.map.get_tile(&hover_pos).is_some() {
+                self.selected_pos = Some(hover_pos);
+            }
+        }
+
+        // Handle tile placement
+        if self.input.should_place_tile(self.selected_pos.as_ref()) {
+            if self.input.can_place_at(hover_pos) {
+                if let Some(selected_pos) = &self.selected_pos {
+                    if let Some(selected_tile) = self.map.get_tile(selected_pos) {
+                        self.map.place_tile(&hover_pos, selected_tile.id);
+                    }
+                }
+            }
+        }
+    }
+
+    fn draw(&mut self) {
+        clear_background(BLACK);
+
+        // Draw world
+        self.camera.apply();
+        self.map.draw(&self.camera, self.selected_pos.as_ref());
+
+        // Highlight hovered tile if not dragging
+        if self.input.get_drag_delta().is_none() {
+            let hover_pos = TilePosition::from_world_pos(
+                self.camera.screen_to_world(self.input.get_mouse_position()),
+            );
+            self.ui.draw_tile_highlight(&hover_pos);
+        }
+
+        // Draw UI
+        set_default_camera();
+
+        if self.input.get_drag_delta().is_none() {
+            let hover_pos = TilePosition::from_world_pos(
+                self.camera.screen_to_world(self.input.get_mouse_position()),
+            );
+            self.ui.draw_hover_info(&hover_pos, &self.map);
+        }
+
+        self.ui
+            .draw_selected_tile_info(self.selected_pos.as_ref(), &self.map);
+        self.ui
+            .draw_selected_tile_preview(self.selected_pos.as_ref(), &self.map);
+        self.ui.draw_stats(&self.map, &self.camera);
+    }
+}
+
+#[macroquad::main("Tilemap Example")]
+async fn main() {
+    let mut game = GameState::new().await;
+
+    loop {
+        game.update();
+        game.draw();
         next_frame().await;
     }
 }
