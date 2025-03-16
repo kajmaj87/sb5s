@@ -1,5 +1,7 @@
 use macroquad::prelude::*;
 use std::collections::{HashMap, VecDeque};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 // Constants
 mod config {
@@ -20,9 +22,9 @@ mod config {
     pub const TEXT_FONT_SIZE: f32 = 20.0;
     pub const TEXT_PADDING: f32 = 15.0;
     pub const PERSON_FRAME_TIME: f32 = 0.2; // Time between animation frames (seconds)
-    pub const PERSON_Z_LAYER: f32 = 1.0; // Z-layer for people (above ground)
     pub const PERSON_SOURCE_TILE_SIZE: f32 = 32.0;
-    pub const PERSON_TILE_SIZE: f32 = 16.0;
+    pub const PERSON_TILE_SIZE: f32 = 32.0;
+    pub const PEOPLE_BENCHMARK_SIZE: usize = 30;
 }
 
 mod utils {
@@ -284,15 +286,25 @@ struct Animation {
     current_frame: usize, // Current frame index
     frame_time: f32,      // Time per frame in seconds
     timer: f32,           // Current timer
+    total_anim_time: f32, // Total animation cycle time
 }
 
 impl Animation {
-    fn new(frames: Vec<usize>, frame_time: f32) -> Self {
+    // Constructor now takes total_anim_time instead of frame_time
+    fn new(frames: Vec<usize>, total_anim_time: f32) -> Self {
+        // Calculate frame time to maintain consistent total animation time
+        let frame_time = if frames.is_empty() {
+            total_anim_time // Avoid division by zero
+        } else {
+            total_anim_time / frames.len() as f32
+        };
+
         Self {
             frames,
             current_frame: 0,
             frame_time,
             timer: 0.0,
+            total_anim_time,
         }
     }
 
@@ -300,14 +312,18 @@ impl Animation {
         self.timer += dt;
 
         // Advance frame if timer exceeds frame_time
-        if self.timer >= self.frame_time {
+        if self.timer >= self.frame_time && !self.frames.is_empty() {
             self.timer -= self.frame_time;
             self.current_frame = (self.current_frame + 1) % self.frames.len();
         }
     }
 
     fn get_current_frame(&self) -> usize {
-        self.frames[self.current_frame]
+        if self.frames.is_empty() {
+            0
+        } else {
+            self.frames[self.current_frame]
+        }
     }
 }
 
@@ -320,53 +336,189 @@ enum Direction {
 }
 
 impl Direction {
-    fn get_animation_frames(&self) -> Vec<usize> {
-        match self {
-            // Assuming your character tileset has these frames - adjust based on your tileset
-            Direction::Down => vec![0, 1, 2, 3],
-            Direction::Up => vec![4, 5, 6, 7],
-            Direction::Left => vec![8, 9, 10, 11],
-            Direction::Right => vec![12, 13, 14, 15],
+    fn get_animation_frames(&self, tiles_per_row: i32) -> Vec<usize> {
+        // Calculate the starting index and frame count based on direction
+        let (start_frame, frame_count) = match self {
+            Direction::Right => (0, tiles_per_row.min(8)), // First row, up to 8 frames
+            Direction::Left => (tiles_per_row, tiles_per_row.min(8)), // Second row
+            Direction::Down => (tiles_per_row * 2, tiles_per_row.min(8)), // Third row
+            Direction::Up => (tiles_per_row * 3, tiles_per_row.min(8)), // Fourth row
+        };
+
+        // Generate frames sequence with explicit type conversion from i32 to usize
+        (start_frame..start_frame + frame_count)
+            .map(|i| i as usize)
+            .collect()
+    }
+
+    // Get direction based on movement vector
+    fn from_movement(dx: f32, dy: f32) -> Self {
+        // Determine the primary direction based on which delta is larger
+        if dx.abs() > dy.abs() {
+            if dx > 0.0 {
+                Direction::Right
+            } else {
+                Direction::Left
+            }
+        } else {
+            if dy > 0.0 {
+                Direction::Down
+            } else {
+                Direction::Up
+            }
         }
     }
 }
+enum PersonState {
+    Idle,
+    Moving,
+}
 
-// Person struct
 struct Person {
-    position: Vec2,       // World position
-    animation: Animation, // Current animation
-    direction: Direction, // Facing direction
+    position: Vec2,                    // Current world position
+    texture: Texture2D,                // Person texture
+    tile_pos: TilePosition,            // Current tile position
+    start_pos: Vec2,                   // Starting position for movement
+    target_pos: Option<Vec2>,          // Target world position for movement
+    target_tile: Option<TilePosition>, // Target tile position
+    animation: Animation,              // Current animation
+    direction: Direction,              // Facing direction
+    state: PersonState,                // Current state
+    move_timer: f32,                   // Timer for movement (0.0 to 1.0)
+    move_duration: f32,                // How long it takes to move one tile (seconds)
+    tiles_per_row: i32,                // Calculated per texture
 }
 
 impl Person {
-    fn new(tile_x: i32, tile_y: i32, direction: Direction) -> Self {
+    fn new(tile_x: i32, tile_y: i32, direction: Direction, texture: Texture2D) -> Self {
         let tile_pos = TilePosition::new(tile_x, tile_y);
         let position = tile_pos.to_world_pos() + Vec2::new(TILE_SIZE / 2.0, TILE_SIZE / 2.0);
-        let frames = direction.get_animation_frames();
-        let animation = Animation::new(frames, PERSON_FRAME_TIME);
+
+        // Calculate tiles_per_row based on texture width
+        let tiles_per_row = (texture.width() / PERSON_SOURCE_TILE_SIZE) as i32;
+
+        // Get animation frames for the initial direction
+        let frames = direction.get_animation_frames(tiles_per_row);
+
+        // Create animation with consistent total time
+        let animation = Animation::new(frames, 0.6); // 0.6s for a complete walk cycle
 
         Self {
             position,
+            tile_pos,
+            texture,
+            start_pos: position,
+            target_pos: None,
+            target_tile: None,
             animation,
             direction,
+            state: PersonState::Idle,
+            move_timer: 0.0,
+            move_duration: 1.0,
+            tiles_per_row,
         }
     }
 
     fn update(&mut self, dt: f32) {
+        match self.state {
+            PersonState::Idle => {
+                // Pick a random direction to move
+                if rand::gen_range(0.0, 1.0) < 0.02 {
+                    // 2% chance to start moving each frame
+                    self.pick_random_direction();
+                }
+            }
+            PersonState::Moving => {
+                // Update movement timer
+                self.move_timer += dt / self.move_duration;
+
+                if self.move_timer >= 1.0 {
+                    // Movement complete - snap to final position
+                    if let Some(target) = self.target_pos {
+                        self.position = target;
+                    }
+                    if let Some(target_tile) = self.target_tile {
+                        self.tile_pos = target_tile;
+                    }
+
+                    // Clear targets and return to idle
+                    self.target_pos = None;
+                    self.target_tile = None;
+                    self.state = PersonState::Idle;
+                    self.move_timer = 0.0;
+                } else {
+                    // Interpolate position using the stored start_pos
+                    if let Some(target) = self.target_pos {
+                        self.position = self.start_pos.lerp(target, self.move_timer);
+                    }
+                }
+            }
+        }
+        // Always update animation
         self.animation.update(dt);
     }
 
-    fn draw(&self, tileset: &Texture2D, tiles_per_row: f32) {
+    fn set_direction(&mut self, direction: Direction) {
+        let frames = direction.get_animation_frames(self.tiles_per_row);
+        self.direction = direction;
+        self.animation = Animation::new(frames, 0.6); // Same 0.6s total animation time
+    }
+
+    fn pick_random_direction(&mut self) {
+        // 1. Select a random adjacent tile
+        let directions = [
+            Direction::Up,
+            Direction::Down,
+            Direction::Left,
+            Direction::Right,
+        ];
+        let rand_dir = &directions[rand::gen_range(0, directions.len())];
+
+        // Calculate the new target tile
+        let mut new_tile = self.tile_pos;
+        match rand_dir {
+            Direction::Up => new_tile.y -= 1,
+            Direction::Down => new_tile.y += 1,
+            Direction::Left => new_tile.x -= 1,
+            Direction::Right => new_tile.x += 1,
+        }
+
+        // 2. Calculate a random point within the inner 3/4 rectangle of the target tile
+        let tile_world_pos = new_tile.to_world_pos();
+        let inner_size = TILE_SIZE * 0.75;
+        let offset = (TILE_SIZE - inner_size) / 2.0;
+
+        // Generate random position within the inner rectangle
+        let random_x = tile_world_pos.x + offset + rand::gen_range(0.0, inner_size);
+        let random_y = tile_world_pos.y + offset + rand::gen_range(0.0, inner_size);
+        let target_pos = Vec2::new(random_x, random_y);
+
+        // 3. Calculate movement vector for direction determination
+        let movement_vector = target_pos - self.position;
+
+        // 4. Set direction based on movement vector rather than randomly
+        let movement_direction = Direction::from_movement(movement_vector.x, movement_vector.y);
+        self.set_direction(movement_direction);
+
+        // 5. Store current position and start moving
+        self.start_pos = self.position;
+        self.target_pos = Some(target_pos);
+        self.target_tile = Some(new_tile);
+        self.state = PersonState::Moving;
+        self.move_timer = 0.0;
+    }
+
+    fn draw(&self) {
         // Get current frame tile ID
         let tile_id = self.animation.get_current_frame();
 
-        // Calculate source rectangle
-        let src_x = (tile_id as f32 % tiles_per_row) * PERSON_SOURCE_TILE_SIZE;
-        let src_y = (tile_id as f32 / tiles_per_row).floor() * PERSON_SOURCE_TILE_SIZE;
+        // Calculate source rectangle using the texture's actual tiles_per_row
+        let src_x = (tile_id as f32 % self.tiles_per_row as f32) * PERSON_SOURCE_TILE_SIZE;
+        let src_y = (tile_id as f32 / self.tiles_per_row as f32).floor() * PERSON_SOURCE_TILE_SIZE;
 
         // Draw person
         draw_texture_ex(
-            tileset,
+            &self.texture,
             self.position.x - PERSON_TILE_SIZE / 2.0,
             self.position.y - PERSON_TILE_SIZE / 2.0,
             WHITE,
@@ -383,6 +535,7 @@ impl Person {
         );
     }
 }
+
 struct CameraController {
     position: Vec2,
     zoom: f32,
@@ -758,7 +911,6 @@ struct GameState {
     debug: DebugWindow,
     selected_pos: Option<TilePosition>,
     people: Vec<Person>,
-    person_tileset: Texture2D,
     last_frame_time: f64,
 }
 
@@ -767,16 +919,55 @@ impl GameState {
         let map = TileMap::new().await;
         let camera = CameraController::new(map.get_initial_center());
         // Load person tileset
-        let person_tileset = load_texture("assets/Minifantasy_Creatures_v3.2_Free_Version/Minifantasy_Creatures_Assets/Base_Humanoids/Human/Base_Human/HumanWalk.png").await.unwrap();
+        // Find all character textures using standard fs
+        let character_paths = find_character_textures("assets");
+
+        println!("Found {} character textures", character_paths.len());
+        for path in &character_paths {
+            println!("Character texture: {}", path.display());
+        }
+
+        // Load all textures
+        let mut character_textures = Vec::new();
+        for path in &character_paths {
+            if let Some(path_str) = path.to_str() {
+                match load_texture(path_str).await {
+                    Ok(texture) => {
+                        // Set appropriate filter mode for pixel art
+                        texture.set_filter(FilterMode::Nearest);
+                        character_textures.push(texture);
+                    }
+                    Err(e) => println!("Failed to load texture {}: {:?}", path_str, e),
+                }
+            }
+        }
+
+        println!("Loaded {} character textures", character_textures.len());
 
         // Create some people at different locations with different directions
         let mut people = Vec::new();
 
-        // Add four people in different directions
-        people.push(Person::new(0, -1, Direction::Down));
-        people.push(Person::new(1, -1, Direction::Up));
-        people.push(Person::new(1, -2, Direction::Left));
-        people.push(Person::new(0, -2, Direction::Right));
+        for _ in 0..PEOPLE_BENCHMARK_SIZE {
+            let tile_x = 1;
+            let tile_y = 1;
+
+            if !character_textures.is_empty() {
+                // Select random texture
+                let texture_index = rand::gen_range(0, character_textures.len());
+                let texture = character_textures[texture_index].clone();
+
+                // Random direction
+                let direction = match rand::gen_range(0, 4) {
+                    0 => Direction::Up,
+                    1 => Direction::Down,
+                    2 => Direction::Left,
+                    _ => Direction::Right,
+                };
+
+                people.push(Person::new(tile_x, tile_y, direction, texture));
+            }
+        }
+
         Self {
             map,
             camera,
@@ -785,7 +976,6 @@ impl GameState {
             debug: DebugWindow::new(),
             selected_pos: None,
             people,
-            person_tileset,
             last_frame_time: get_time(),
         }
     }
@@ -838,7 +1028,7 @@ impl GameState {
         self.camera.apply();
         self.map.draw(&self.camera, self.selected_pos.as_ref());
         for person in &self.people {
-            person.draw(&self.person_tileset, 4.0); // Assuming 4 tiles per row in character sheet
+            person.draw(); // Assuming 4 tiles per row in character sheet
         }
         // Highlight hovered tile if not dragging (only in debug mode)
         if self.input.get_drag_delta().is_none() {
@@ -863,7 +1053,42 @@ impl GameState {
         );
     }
 }
+// Function to find character textures using standard fs
+fn find_character_textures(dir_path: &str) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
 
+    // Recursively search for Walk.png files
+    visit_dirs(Path::new(dir_path), &mut paths).unwrap_or_else(|e| {
+        println!("Error scanning directory: {:?}", e);
+    });
+
+    paths
+}
+
+// Helper function for recursive directory traversal
+fn visit_dirs(dir: &Path, paths: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    if dir.is_dir() {
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+
+            if path.is_dir() {
+                visit_dirs(&path, paths)?;
+            } else if let Some(extension) = path.extension() {
+                if extension == "png" {
+                    if let Some(file_name) = path.file_name() {
+                        if let Some(name) = file_name.to_str() {
+                            if name.ends_with("Walk.png") && !name.contains("Shadow") {
+                                paths.push(path.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
 #[macroquad::main("Tilemap Example")]
 async fn main() {
     let mut game = GameState::new().await;
