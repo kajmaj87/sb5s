@@ -95,7 +95,7 @@ jobs:
 
       # Upload artifacts - using v2 instead of v3
       - name: Upload artifacts
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.binary }}-${{ matrix.os }}
           path: artifacts/
