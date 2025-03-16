@@ -13,12 +13,16 @@ mod config {
     pub const DRAG_THRESHOLD: f32 = 5.0;
     pub const SELECTED_TILE_ZOOM: f32 = 8.0;
     pub const FPS_HISTORY_SIZE: usize = 60;
-    pub const BENCHMARK_MAP_SIZE: usize = 5;
+    pub const BENCHMARK_MAP_SIZE: usize = 1;
     pub const CAMERA_SPEED: f32 = 5.0;
     pub const TILE_BUFFER: i32 = 2;
     pub const TEXT_BACKGROUND_COLOR: Color = Color::new(0.0, 0.0, 0.0, 0.7);
     pub const TEXT_FONT_SIZE: f32 = 20.0;
     pub const TEXT_PADDING: f32 = 15.0;
+    pub const PERSON_FRAME_TIME: f32 = 0.2; // Time between animation frames (seconds)
+    pub const PERSON_Z_LAYER: f32 = 1.0; // Z-layer for people (above ground)
+    pub const PERSON_SOURCE_TILE_SIZE: f32 = 32.0;
+    pub const PERSON_TILE_SIZE: f32 = 16.0;
 }
 
 mod utils {
@@ -275,7 +279,110 @@ impl TileMap {
         )
     }
 }
+struct Animation {
+    frames: Vec<usize>,   // Tile IDs for each frame
+    current_frame: usize, // Current frame index
+    frame_time: f32,      // Time per frame in seconds
+    timer: f32,           // Current timer
+}
 
+impl Animation {
+    fn new(frames: Vec<usize>, frame_time: f32) -> Self {
+        Self {
+            frames,
+            current_frame: 0,
+            frame_time,
+            timer: 0.0,
+        }
+    }
+
+    fn update(&mut self, dt: f32) {
+        self.timer += dt;
+
+        // Advance frame if timer exceeds frame_time
+        if self.timer >= self.frame_time {
+            self.timer -= self.frame_time;
+            self.current_frame = (self.current_frame + 1) % self.frames.len();
+        }
+    }
+
+    fn get_current_frame(&self) -> usize {
+        self.frames[self.current_frame]
+    }
+}
+
+// Direction enum for people
+enum Direction {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+impl Direction {
+    fn get_animation_frames(&self) -> Vec<usize> {
+        match self {
+            // Assuming your character tileset has these frames - adjust based on your tileset
+            Direction::Down => vec![0, 1, 2, 3],
+            Direction::Up => vec![4, 5, 6, 7],
+            Direction::Left => vec![8, 9, 10, 11],
+            Direction::Right => vec![12, 13, 14, 15],
+        }
+    }
+}
+
+// Person struct
+struct Person {
+    position: Vec2,       // World position
+    animation: Animation, // Current animation
+    direction: Direction, // Facing direction
+}
+
+impl Person {
+    fn new(tile_x: i32, tile_y: i32, direction: Direction) -> Self {
+        let tile_pos = TilePosition::new(tile_x, tile_y);
+        let position = tile_pos.to_world_pos() + Vec2::new(TILE_SIZE / 2.0, TILE_SIZE / 2.0);
+        let frames = direction.get_animation_frames();
+        let animation = Animation::new(frames, PERSON_FRAME_TIME);
+
+        Self {
+            position,
+            animation,
+            direction,
+        }
+    }
+
+    fn update(&mut self, dt: f32) {
+        self.animation.update(dt);
+    }
+
+    fn draw(&self, tileset: &Texture2D, tiles_per_row: f32) {
+        // Get current frame tile ID
+        let tile_id = self.animation.get_current_frame();
+
+        // Calculate source rectangle
+        let src_x = (tile_id as f32 % tiles_per_row) * PERSON_SOURCE_TILE_SIZE;
+        let src_y = (tile_id as f32 / tiles_per_row).floor() * PERSON_SOURCE_TILE_SIZE;
+
+        // Draw person
+        draw_texture_ex(
+            tileset,
+            self.position.x - PERSON_TILE_SIZE / 2.0,
+            self.position.y - PERSON_TILE_SIZE / 2.0,
+            WHITE,
+            DrawTextureParams {
+                source: Some(Rect::new(
+                    src_x,
+                    src_y,
+                    PERSON_SOURCE_TILE_SIZE,
+                    PERSON_SOURCE_TILE_SIZE,
+                )),
+                dest_size: Some(Vec2::new(PERSON_TILE_SIZE, PERSON_TILE_SIZE)),
+                ..Default::default()
+            },
+        );
+    }
+}
 struct CameraController {
     position: Vec2,
     zoom: f32,
@@ -650,13 +757,26 @@ struct GameState {
     ui: UI,
     debug: DebugWindow,
     selected_pos: Option<TilePosition>,
+    people: Vec<Person>,
+    person_tileset: Texture2D,
+    last_frame_time: f64,
 }
 
 impl GameState {
     async fn new() -> Self {
         let map = TileMap::new().await;
         let camera = CameraController::new(map.get_initial_center());
+        // Load person tileset
+        let person_tileset = load_texture("assets/Minifantasy_Creatures_v3.2_Free_Version/Minifantasy_Creatures_Assets/Base_Humanoids/Human/Base_Human/HumanWalk.png").await.unwrap();
 
+        // Create some people at different locations with different directions
+        let mut people = Vec::new();
+
+        // Add four people in different directions
+        people.push(Person::new(0, -1, Direction::Down));
+        people.push(Person::new(1, -1, Direction::Up));
+        people.push(Person::new(1, -2, Direction::Left));
+        people.push(Person::new(0, -2, Direction::Right));
         Self {
             map,
             camera,
@@ -664,10 +784,22 @@ impl GameState {
             ui: UI::new(),
             debug: DebugWindow::new(),
             selected_pos: None,
+            people,
+            person_tileset,
+            last_frame_time: get_time(),
         }
     }
 
     fn update(&mut self) {
+        let current_time = get_time();
+        let dt = (current_time - self.last_frame_time) as f32;
+
+        self.last_frame_time = current_time;
+
+        for person in &mut self.people {
+            person.update(dt);
+        }
+
         self.input.update();
         self.camera.update(&self.input);
         self.debug.update();
@@ -705,7 +837,9 @@ impl GameState {
         // Draw world
         self.camera.apply();
         self.map.draw(&self.camera, self.selected_pos.as_ref());
-
+        for person in &self.people {
+            person.draw(&self.person_tileset, 4.0); // Assuming 4 tiles per row in character sheet
+        }
         // Highlight hovered tile if not dragging (only in debug mode)
         if self.input.get_drag_delta().is_none() {
             let hover_pos = TilePosition::from_world_pos(
