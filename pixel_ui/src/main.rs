@@ -313,6 +313,7 @@ impl InputManager {
             last_painted_pos: None,
         }
     }
+
     fn update(&mut self) {
         self.prev_mouse_position = self.mouse_position;
         self.mouse_position = Vec2::new(mouse_position().0, mouse_position().1);
@@ -345,7 +346,7 @@ impl InputManager {
             self.is_dragging = false;
         }
     }
-    // Changed to return the frame-by-frame delta for smooth movement
+
     fn is_direction_pressed(&self) -> bool {
         is_key_down(KeyCode::W)
             || is_key_down(KeyCode::Up)
@@ -407,57 +408,11 @@ impl InputManager {
     }
 }
 
-struct UI {
-    fps_history: VecDeque<i32>,
-}
+struct UI {}
 
 impl UI {
     fn new() -> Self {
-        Self {
-            fps_history: VecDeque::with_capacity(FPS_HISTORY_SIZE),
-        }
-    }
-
-    fn update(&mut self) {
-        let current_fps = get_fps();
-        self.fps_history.push_back(current_fps);
-        if self.fps_history.len() > FPS_HISTORY_SIZE {
-            self.fps_history.pop_front();
-        }
-    }
-
-    fn draw_hover_info(&self, hover_pos: &TilePosition, map: &TileMap) {
-        if let Some(tile) = map.get_tile(hover_pos) {
-            draw_text(
-                &format!("Hover: ({}, {}) ID: {}", hover_pos.x, hover_pos.y, tile.id),
-                10.0,
-                30.0,
-                20.0,
-                WHITE,
-            );
-        } else {
-            draw_text(
-                &format!("Hover: ({}, {}) [Empty]", hover_pos.x, hover_pos.y),
-                10.0,
-                30.0,
-                20.0,
-                WHITE,
-            );
-        }
-    }
-
-    fn draw_selected_tile_info(&self, selected_pos: Option<&TilePosition>, map: &TileMap) {
-        if let Some(pos) = selected_pos {
-            if let Some(tile) = map.get_tile(pos) {
-                draw_text(
-                    &format!("Selected: ({}, {}) ID: {}", pos.x, pos.y, tile.id),
-                    10.0,
-                    60.0,
-                    20.0,
-                    RED,
-                );
-            }
-        }
+        Self {}
     }
 
     fn draw_selected_tile_preview(&self, selected_pos: Option<&TilePosition>, map: &TileMap) {
@@ -507,6 +462,109 @@ impl UI {
         }
     }
 
+    fn draw_instructions(&self) {
+        draw_text(
+            "WASD/Arrows: move, Mouse wheel: zoom, Left-click drag: pan, Left-click: select, Right-click/drag: place tiles",
+            10.0,
+            screen_height() - 30.0,
+            20.0,
+            WHITE,
+        );
+    }
+}
+
+struct DebugWindow {
+    enabled: bool,
+    background_color: Color,
+    fps_history: VecDeque<i32>,
+}
+
+impl DebugWindow {
+    fn new() -> Self {
+        Self {
+            enabled: true,                                    // On by default
+            background_color: Color::new(0.0, 0.0, 0.0, 0.7), // Semi-transparent black
+            fps_history: VecDeque::with_capacity(FPS_HISTORY_SIZE),
+        }
+    }
+
+    fn update(&mut self) {
+        let current_fps = get_fps();
+        self.fps_history.push_back(current_fps);
+        if self.fps_history.len() > FPS_HISTORY_SIZE {
+            self.fps_history.pop_front();
+        }
+    }
+
+    fn toggle(&mut self) {
+        self.enabled = !self.enabled;
+    }
+
+    fn draw(
+        &self,
+        map: &TileMap,
+        camera: &CameraController,
+        selected_pos: Option<&TilePosition>,
+        input: &InputManager,
+    ) {
+        if !self.enabled {
+            return;
+        }
+
+        // First, draw a semi-transparent background for the debug panel
+        let panel_width = 400.0;
+        let panel_height = 210.0;
+        draw_rectangle(10.0, 10.0, panel_width, panel_height, self.background_color);
+
+        // Draw hover info if not dragging
+        if input.get_drag_delta().is_none() {
+            let hover_pos =
+                TilePosition::from_world_pos(camera.screen_to_world(input.get_mouse_position()));
+            self.draw_hover_info(&hover_pos, map);
+        }
+
+        // Draw selected tile info
+        self.draw_selected_tile_info(selected_pos, map);
+
+        // Draw statistics
+        self.draw_stats(map, camera);
+        self.draw_usage_info();
+    }
+
+    fn draw_hover_info(&self, hover_pos: &TilePosition, map: &TileMap) {
+        if let Some(tile) = map.get_tile(hover_pos) {
+            draw_text(
+                &format!("Hover: ({}, {}) ID: {}", hover_pos.x, hover_pos.y, tile.id),
+                20.0,
+                30.0,
+                20.0,
+                WHITE,
+            );
+        } else {
+            draw_text(
+                &format!("Hover: ({}, {}) [Empty]", hover_pos.x, hover_pos.y),
+                20.0,
+                30.0,
+                20.0,
+                WHITE,
+            );
+        }
+    }
+
+    fn draw_selected_tile_info(&self, selected_pos: Option<&TilePosition>, map: &TileMap) {
+        if let Some(pos) = selected_pos {
+            if let Some(tile) = map.get_tile(pos) {
+                draw_text(
+                    &format!("Selected: ({}, {}) ID: {}", pos.x, pos.y, tile.id),
+                    20.0,
+                    60.0,
+                    20.0,
+                    RED,
+                );
+            }
+        }
+    }
+
     fn draw_stats(&self, map: &TileMap, camera: &CameraController) {
         // Culling stats
         draw_text(
@@ -516,7 +574,7 @@ impl UI {
                 map.tiles.len(),
                 100.0 * map.visible_tiles_count as f32 / map.tiles.len() as f32
             ),
-            10.0,
+            20.0,
             90.0,
             20.0,
             BLUE,
@@ -525,7 +583,7 @@ impl UI {
         // Zoom level
         draw_text(
             &format!("Zoom: {:.3}", camera.zoom),
-            10.0,
+            20.0,
             120.0,
             20.0,
             SKYBLUE,
@@ -538,39 +596,35 @@ impl UI {
                 "Map bounds: ({}, {}) to ({}, {})",
                 bounds.0, bounds.1, bounds.2, bounds.3
             ),
-            10.0,
+            20.0,
             150.0,
             20.0,
             GREEN,
         );
 
-        // Instructions
-        draw_text(
-            "WASD/Arrows: move, Mouse wheel: zoom, Left-click drag: pan, Left-click: select, Right-click/drag: place tiles",
-            10.0,
-            screen_height() - 30.0,
-            20.0,
-            WHITE,
-        );
-
         // FPS counter
         let avg_fps: f32 =
             self.fps_history.iter().sum::<i32>() as f32 / self.fps_history.len().max(1) as f32;
-        let fps_text = format!("FPS: {} (Avg: {:.1})", get_fps(), avg_fps);
-        let fps_text_width = measure_text(&fps_text, None, 20, 1.0).width;
-
         draw_text(
-            &fps_text,
-            screen_width() - fps_text_width - 10.0,
-            screen_height() - 10.0,
+            &format!("FPS: {} (Avg: {:.1})", get_fps(), avg_fps),
+            20.0,
+            180.0,
             20.0,
             GREEN,
         );
     }
 
     fn draw_tile_highlight(&self, pos: &TilePosition) {
+        if !self.enabled {
+            return;
+        }
+
         let world_pos = pos.to_world_pos();
         draw_rectangle_lines(world_pos.x, world_pos.y, TILE_SIZE, TILE_SIZE, 2.0, YELLOW);
+    }
+
+    fn draw_usage_info(&self) {
+        draw_text("Shift + D: Toggle debug window", 20.0, 210.0, 20.0, WHITE);
     }
 }
 
@@ -579,6 +633,7 @@ struct GameState {
     camera: CameraController,
     input: InputManager,
     ui: UI,
+    debug: DebugWindow,
     selected_pos: Option<TilePosition>,
 }
 
@@ -592,6 +647,7 @@ impl GameState {
             camera,
             input: InputManager::new(),
             ui: UI::new(),
+            debug: DebugWindow::new(),
             selected_pos: None,
         }
     }
@@ -599,7 +655,11 @@ impl GameState {
     fn update(&mut self) {
         self.input.update();
         self.camera.update(&self.input);
-        self.ui.update();
+        self.debug.update();
+
+        if is_key_down(KeyCode::LeftShift) && is_key_pressed(KeyCode::D) {
+            self.debug.toggle();
+        }
 
         // Convert mouse position to world coordinates
         let mouse_world_pos = self.camera.screen_to_world(self.input.get_mouse_position());
@@ -631,29 +691,27 @@ impl GameState {
         self.camera.apply();
         self.map.draw(&self.camera, self.selected_pos.as_ref());
 
-        // Highlight hovered tile if not dragging
+        // Highlight hovered tile if not dragging (only in debug mode)
         if self.input.get_drag_delta().is_none() {
             let hover_pos = TilePosition::from_world_pos(
                 self.camera.screen_to_world(self.input.get_mouse_position()),
             );
-            self.ui.draw_tile_highlight(&hover_pos);
+            self.debug.draw_tile_highlight(&hover_pos);
         }
 
-        // Draw UI
+        // Draw UI (always visible)
         set_default_camera();
-
-        if self.input.get_drag_delta().is_none() {
-            let hover_pos = TilePosition::from_world_pos(
-                self.camera.screen_to_world(self.input.get_mouse_position()),
-            );
-            self.ui.draw_hover_info(&hover_pos, &self.map);
-        }
-
-        self.ui
-            .draw_selected_tile_info(self.selected_pos.as_ref(), &self.map);
+        self.ui.draw_instructions();
         self.ui
             .draw_selected_tile_preview(self.selected_pos.as_ref(), &self.map);
-        self.ui.draw_stats(&self.map, &self.camera);
+
+        // Draw debug window if enabled
+        self.debug.draw(
+            &self.map,
+            &self.camera,
+            self.selected_pos.as_ref(),
+            &self.input,
+        );
     }
 }
 
