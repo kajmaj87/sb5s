@@ -11,8 +11,6 @@ jobs:
   check:
     name: Check
     runs-on: ubuntu-latest
-    container:
-      image: docker://kajmaj87/rust-builder:latest
     strategy:
       matrix:
         rust:
@@ -95,9 +93,9 @@ jobs:
           cp target/release/${{ matrix.binary }}.exe artifacts/
           cp -r assets artifacts/
 
-      # Upload artifacts
+      # Upload artifacts - using v2 instead of v3
       - name: Upload artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v2
         with:
           name: ${{ matrix.binary }}-${{ matrix.os }}
           path: artifacts/
@@ -117,4 +115,3 @@ jobs:
             Commit Message: "${{ github.event.head_commit.message }}"
             Artifacts: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
             Status: ${{ job.status }}
-
