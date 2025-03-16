@@ -3,6 +3,8 @@ use std::collections::{HashMap, VecDeque};
 
 // Constants
 mod config {
+    use macroquad::prelude::Color;
+
     pub const TILE_SIZE: f32 = 32.0;
     pub const SOURCE_TILE_SIZE: f32 = 16.0;
     pub const ZOOM_SPEED: f32 = 1.3;
@@ -14,8 +16,71 @@ mod config {
     pub const BENCHMARK_MAP_SIZE: usize = 5;
     pub const CAMERA_SPEED: f32 = 5.0;
     pub const TILE_BUFFER: i32 = 2;
+    pub const TEXT_BACKGROUND_COLOR: Color = Color::new(0.0, 0.0, 0.0, 0.7);
+    pub const TEXT_FONT_SIZE: f32 = 20.0;
+    pub const TEXT_PADDING: f32 = 15.0;
 }
 
+mod utils {
+    use super::config::*;
+    use macroquad::math::f32;
+    use macroquad::prelude::*;
+
+    pub fn draw_text_with_background(text: &str, x: f32, y: f32, color: Color) {
+        let font_size = TEXT_FONT_SIZE;
+        let text_dimensions = measure_text(text, None, font_size as u16, 1.0);
+        let padding = TEXT_PADDING;
+
+        // Draw background rectangle with padding
+        draw_rectangle(
+            x - padding,
+            y - text_dimensions.offset_y - padding,
+            text_dimensions.width + padding * 2.0,
+            text_dimensions.height + padding * 2.0,
+            TEXT_BACKGROUND_COLOR,
+        );
+
+        // Draw text
+        draw_text(text, x, y, font_size, color);
+    }
+    pub fn draw_text_list(texts: Vec<(String, Color)>, x: f32, y: f32) -> f32 {
+        let font_size = TEXT_FONT_SIZE;
+        let padding = TEXT_PADDING;
+
+        // Use a consistent line height based on font size rather than measuring each string
+        let line_height = font_size + 4.0; // Consistent line height
+
+        // Calculate dimensions for all texts
+        let mut max_width: f32 = 0.0;
+        let total_height = (texts.len() as f32) * line_height;
+
+        for (text, _) in &texts {
+            let dimensions = measure_text(text, None, font_size as u16, 1.0);
+            max_width = max_width.max(dimensions.width);
+        }
+
+        // Draw background rectangle
+        draw_rectangle(
+            x - padding,
+            y,
+            max_width + padding * 2.0,
+            total_height + padding,
+            TEXT_BACKGROUND_COLOR,
+        );
+
+        // Draw all texts with consistent spacing
+        let mut current_y = y;
+        for (text, color) in texts {
+            draw_text(&text, x, current_y + line_height, font_size, color);
+            current_y += line_height;
+        }
+
+        // Return the final y coordinate
+        current_y
+    }
+}
+
+use crate::utils::*;
 use config::*;
 
 #[derive(Clone)]
@@ -463,11 +528,10 @@ impl UI {
     }
 
     fn draw_instructions(&self) {
-        draw_text(
+        draw_text_with_background(
             "WASD/Arrows: move, Mouse wheel: zoom, Left-click drag: pan, Left-click: select, Right-click/drag: place tiles",
             10.0,
             screen_height() - 30.0,
-            20.0,
             WHITE,
         );
     }
@@ -475,15 +539,13 @@ impl UI {
 
 struct DebugWindow {
     enabled: bool,
-    background_color: Color,
     fps_history: VecDeque<i32>,
 }
 
 impl DebugWindow {
     fn new() -> Self {
         Self {
-            enabled: true,                                    // On by default
-            background_color: Color::new(0.0, 0.0, 0.0, 0.7), // Semi-transparent black
+            enabled: true, // On by default
             fps_history: VecDeque::with_capacity(FPS_HISTORY_SIZE),
         }
     }
@@ -511,107 +573,64 @@ impl DebugWindow {
             return;
         }
 
-        // First, draw a semi-transparent background for the debug panel
-        let panel_width = 400.0;
-        let panel_height = 210.0;
-        draw_rectangle(10.0, 10.0, panel_width, panel_height, self.background_color);
+        let mut debug_texts = Vec::new();
 
-        // Draw hover info if not dragging
+        // Add hover info if not dragging
         if input.get_drag_delta().is_none() {
             let hover_pos =
                 TilePosition::from_world_pos(camera.screen_to_world(input.get_mouse_position()));
-            self.draw_hover_info(&hover_pos, map);
-        }
 
-        // Draw selected tile info
-        self.draw_selected_tile_info(selected_pos, map);
-
-        // Draw statistics
-        self.draw_stats(map, camera);
-        self.draw_usage_info();
-    }
-
-    fn draw_hover_info(&self, hover_pos: &TilePosition, map: &TileMap) {
-        if let Some(tile) = map.get_tile(hover_pos) {
-            draw_text(
-                &format!("Hover: ({}, {}) ID: {}", hover_pos.x, hover_pos.y, tile.id),
-                20.0,
-                30.0,
-                20.0,
-                WHITE,
-            );
-        } else {
-            draw_text(
-                &format!("Hover: ({}, {}) [Empty]", hover_pos.x, hover_pos.y),
-                20.0,
-                30.0,
-                20.0,
-                WHITE,
-            );
-        }
-    }
-
-    fn draw_selected_tile_info(&self, selected_pos: Option<&TilePosition>, map: &TileMap) {
-        if let Some(pos) = selected_pos {
-            if let Some(tile) = map.get_tile(pos) {
-                draw_text(
-                    &format!("Selected: ({}, {}) ID: {}", pos.x, pos.y, tile.id),
-                    20.0,
-                    60.0,
-                    20.0,
-                    RED,
-                );
+            if let Some(tile) = map.get_tile(&hover_pos) {
+                debug_texts.push((
+                    format!("Hover: ({}, {}) ID: {}", hover_pos.x, hover_pos.y, tile.id),
+                    WHITE,
+                ));
+            } else {
+                debug_texts.push((
+                    format!("Hover: ({}, {}) [Empty]", hover_pos.x, hover_pos.y),
+                    WHITE,
+                ));
             }
         }
-    }
 
-    fn draw_stats(&self, map: &TileMap, camera: &CameraController) {
-        // Culling stats
-        draw_text(
-            &format!(
+        // Add selected tile info
+        if let Some(pos) = selected_pos {
+            if let Some(tile) = map.get_tile(pos) {
+                debug_texts.push((
+                    format!("Selected: ({}, {}) ID: {}", pos.x, pos.y, tile.id),
+                    RED,
+                ));
+            }
+        }
+
+        // Add statistics
+        debug_texts.push((
+            format!(
                 "Visible tiles: {}/{} ({:.1}%)",
                 map.visible_tiles_count,
                 map.tiles.len(),
                 100.0 * map.visible_tiles_count as f32 / map.tiles.len() as f32
             ),
-            20.0,
-            90.0,
-            20.0,
             BLUE,
-        );
+        ));
 
-        // Zoom level
-        draw_text(
-            &format!("Zoom: {:.3}", camera.zoom),
-            20.0,
-            120.0,
-            20.0,
-            SKYBLUE,
-        );
+        debug_texts.push((format!("Zoom: {:.3}", camera.zoom), SKYBLUE));
 
-        // Map bounds
         let bounds = map.bounds.as_tuple();
-        draw_text(
-            &format!(
+        debug_texts.push((
+            format!(
                 "Map bounds: ({}, {}) to ({}, {})",
                 bounds.0, bounds.1, bounds.2, bounds.3
             ),
-            20.0,
-            150.0,
-            20.0,
             GREEN,
-        );
+        ));
 
-        // FPS counter
         let avg_fps: f32 =
             self.fps_history.iter().sum::<i32>() as f32 / self.fps_history.len().max(1) as f32;
-        draw_text(
-            &format!("FPS: {} (Avg: {:.1})", get_fps(), avg_fps),
-            20.0,
-            180.0,
-            20.0,
-            GREEN,
-        );
+        debug_texts.push((format!("FPS: {} (Avg: {:.1})", get_fps(), avg_fps), GREEN));
+
+        // Draw all debug texts with a single background
+        draw_text_list(debug_texts, 20.0, 30.0);
     }
 
     fn draw_tile_highlight(&self, pos: &TilePosition) {
@@ -621,10 +640,6 @@ impl DebugWindow {
 
         let world_pos = pos.to_world_pos();
         draw_rectangle_lines(world_pos.x, world_pos.y, TILE_SIZE, TILE_SIZE, 2.0, YELLOW);
-    }
-
-    fn draw_usage_info(&self) {
-        draw_text("Shift + D: Toggle debug window", 20.0, 210.0, 20.0, WHITE);
     }
 }
 
