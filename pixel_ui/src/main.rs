@@ -21,10 +21,9 @@ mod config {
     pub const TEXT_BACKGROUND_COLOR: Color = Color::new(0.0, 0.0, 0.0, 0.7);
     pub const TEXT_FONT_SIZE: f32 = 20.0;
     pub const TEXT_PADDING: f32 = 15.0;
-    pub const PERSON_FRAME_TIME: f32 = 0.2; // Time between animation frames (seconds)
     pub const PERSON_SOURCE_TILE_SIZE: f32 = 32.0;
     pub const PERSON_TILE_SIZE: f32 = 32.0;
-    pub const PEOPLE_BENCHMARK_SIZE: usize = 30;
+    pub const PEOPLE_BENCHMARK_SIZE: usize = 0;
 }
 
 mod utils {
@@ -286,7 +285,6 @@ struct Animation {
     current_frame: usize, // Current frame index
     frame_time: f32,      // Time per frame in seconds
     timer: f32,           // Current timer
-    total_anim_time: f32, // Total animation cycle time
 }
 
 impl Animation {
@@ -304,7 +302,6 @@ impl Animation {
             current_frame: 0,
             frame_time,
             timer: 0.0,
-            total_anim_time,
         }
     }
 
@@ -888,6 +885,10 @@ impl DebugWindow {
         let avg_fps: f32 =
             self.fps_history.iter().sum::<i32>() as f32 / self.fps_history.len().max(1) as f32;
         debug_texts.push((format!("FPS: {} (Avg: {:.1})", get_fps(), avg_fps), GREEN));
+        debug_texts.push((
+            "Shift+D to toggle debug mode window".parse().unwrap(),
+            WHITE,
+        ));
 
         // Draw all debug texts with a single background
         draw_text_list(debug_texts, 20.0, 30.0);
@@ -902,6 +903,12 @@ impl DebugWindow {
         draw_rectangle_lines(world_pos.x, world_pos.y, TILE_SIZE, TILE_SIZE, 2.0, YELLOW);
     }
 }
+// Define a UI state enum to track the current mode
+#[derive(PartialEq)]
+enum UIState {
+    TileCreation,
+    PeopleCreation,
+}
 
 struct GameState {
     map: TileMap,
@@ -912,28 +919,23 @@ struct GameState {
     selected_pos: Option<TilePosition>,
     people: Vec<Person>,
     last_frame_time: f64,
+    ui_state: UIState,
+    character_textures: Vec<Texture2D>,
 }
 
 impl GameState {
     async fn new() -> Self {
         let map = TileMap::new().await;
         let camera = CameraController::new(map.get_initial_center());
-        // Load person tileset
-        // Find all character textures using standard fs
+
+        // Load character textures
         let character_paths = find_character_textures("assets");
-
-        println!("Found {} character textures", character_paths.len());
-        for path in &character_paths {
-            println!("Character texture: {}", path.display());
-        }
-
-        // Load all textures
         let mut character_textures = Vec::new();
+
         for path in &character_paths {
             if let Some(path_str) = path.to_str() {
                 match load_texture(path_str).await {
                     Ok(texture) => {
-                        // Set appropriate filter mode for pixel art
                         texture.set_filter(FilterMode::Nearest);
                         character_textures.push(texture);
                     }
@@ -942,9 +944,7 @@ impl GameState {
             }
         }
 
-        println!("Loaded {} character textures", character_textures.len());
-
-        // Create some people at different locations with different directions
+        // Create initial people
         let mut people = Vec::new();
 
         for _ in 0..PEOPLE_BENCHMARK_SIZE {
@@ -977,15 +977,17 @@ impl GameState {
             selected_pos: None,
             people,
             last_frame_time: get_time(),
+            ui_state: UIState::TileCreation, // Default state
+            character_textures,
         }
     }
 
     fn update(&mut self) {
         let current_time = get_time();
         let dt = (current_time - self.last_frame_time) as f32;
-
         self.last_frame_time = current_time;
 
+        // Update people
         for person in &mut self.people {
             person.update(dt);
         }
@@ -994,8 +996,14 @@ impl GameState {
         self.camera.update(&self.input);
         self.debug.update();
 
+        // Toggle debug mode
         if is_key_down(KeyCode::LeftShift) && is_key_pressed(KeyCode::D) {
             self.debug.toggle();
+        }
+
+        // Toggle between creation modes with 'p' key (only when a tile is selected)
+        if is_key_pressed(KeyCode::P) {
+            self.ui_state = UIState::PeopleCreation;
         }
 
         // Convert mouse position to world coordinates
@@ -1006,17 +1014,66 @@ impl GameState {
         if self.input.should_select_tile() {
             if self.map.get_tile(&hover_pos).is_some() {
                 self.selected_pos = Some(hover_pos);
+                self.ui_state = UIState::TileCreation;
             }
         }
 
-        // Handle tile placement
-        if self.input.should_place_tile(self.selected_pos.as_ref()) {
-            if self.input.can_place_at(hover_pos) {
-                if let Some(selected_pos) = &self.selected_pos {
-                    if let Some(selected_tile) = self.map.get_tile(selected_pos) {
-                        self.map.place_tile(&hover_pos, selected_tile.id);
+        // Handle actions based on UI state
+        match self.ui_state {
+            UIState::TileCreation => {
+                // Handle tile placement
+                if self.input.should_place_tile(self.selected_pos.as_ref()) {
+                    if self.input.can_place_at(hover_pos) {
+                        if let Some(selected_pos) = &self.selected_pos {
+                            if let Some(selected_tile) = self.map.get_tile(selected_pos) {
+                                self.map.place_tile(&hover_pos, selected_tile.id);
+                            }
+                        }
                     }
                 }
+            }
+            UIState::PeopleCreation => {
+                // Handle person creation on right-click
+                if is_mouse_button_pressed(MouseButton::Right) {
+                    self.add_person_at_tile(hover_pos);
+                }
+            }
+        }
+    }
+
+    fn add_person_at_tile(&mut self, tile_pos: TilePosition) {
+        // Verify that this is a valid tile position
+        if self.map.get_tile(&tile_pos).is_some() {
+            // Select a random texture if we have any
+            if !self.character_textures.is_empty() {
+                let texture_index = rand::gen_range(0, self.character_textures.len());
+                let texture = self.character_textures[texture_index].clone();
+
+                // Calculate a random position within the inner 3/4 rectangle of the tile
+                let tile_world_pos = tile_pos.to_world_pos();
+                let inner_size = TILE_SIZE * 0.75;
+                let offset = (TILE_SIZE - inner_size) / 2.0;
+
+                // Generate random position within the inner rectangle
+                let random_x = tile_world_pos.x + offset + rand::gen_range(0.0, inner_size);
+                let random_y = tile_world_pos.y + offset + rand::gen_range(0.0, inner_size);
+
+                // Random direction
+                let random_dir = match rand::gen_range(0, 4) {
+                    0 => Direction::Up,
+                    1 => Direction::Down,
+                    2 => Direction::Left,
+                    _ => Direction::Right,
+                };
+
+                // Create the person with default positioning
+                let mut person = Person::new(tile_pos.x, tile_pos.y, random_dir, texture);
+
+                // Override the default position with our random position
+                person.position = Vec2::new(random_x, random_y);
+
+                // Add the person to our list
+                self.people.push(person);
             }
         }
     }
@@ -1028,8 +1085,9 @@ impl GameState {
         self.camera.apply();
         self.map.draw(&self.camera, self.selected_pos.as_ref());
         for person in &self.people {
-            person.draw(); // Assuming 4 tiles per row in character sheet
+            person.draw(); // Using the updated draw method without tiles_per_row
         }
+
         // Highlight hovered tile if not dragging (only in debug mode)
         if self.input.get_drag_delta().is_none() {
             let hover_pos = TilePosition::from_world_pos(
@@ -1043,6 +1101,29 @@ impl GameState {
         self.ui.draw_instructions();
         self.ui
             .draw_selected_tile_preview(self.selected_pos.as_ref(), &self.map);
+
+        // Display mode-specific message
+        match self.ui_state {
+            UIState::PeopleCreation => {
+                draw_text_with_background(
+                    "PEOPLE CREATION MODE (select a tile to exit, Right-click to add person)",
+                    10.0,
+                    screen_height() - 60.0,
+                    YELLOW,
+                );
+            }
+            UIState::TileCreation => {
+                // Optional: Show tile creation mode text
+                if self.selected_pos.is_some() {
+                    draw_text_with_background(
+                        "TILE CREATION MODE (Press P to switch to people mode)",
+                        10.0,
+                        screen_height() - 60.0,
+                        GREEN,
+                    );
+                }
+            }
+        }
 
         // Draw debug window if enabled
         self.debug.draw(
