@@ -157,7 +157,7 @@ struct TileMap {
 
 impl TileMap {
     async fn new() -> Self {
-        let tileset = load_texture("tileset.png").await.unwrap();
+        let tileset = load_texture("assets/tileset.png").await.unwrap();
         tileset.set_filter(FilterMode::Nearest);
 
         let tiles_per_row = (tileset.width() / SOURCE_TILE_SIZE).floor() as f32;
@@ -1079,43 +1079,6 @@ impl GameState {
             self.people.push(person);
         }
     }
-    fn add_person_at_tile(&mut self, tile_pos: TilePosition) {
-        // Verify that this is a valid tile position
-        if self.map.get_tile(&tile_pos).is_some() {
-            // Select a random texture if we have any
-            if !self.character_textures.is_empty() {
-                let texture_index = rand::gen_range(0, self.character_textures.len());
-                let texture = self.character_textures[texture_index].clone();
-
-                // Calculate a random position within the inner 3/4 rectangle of the tile
-                let tile_world_pos = tile_pos.to_world_pos();
-                let inner_size = TILE_SIZE * 0.75;
-                let offset = (TILE_SIZE - inner_size) / 2.0;
-
-                // Generate random position within the inner rectangle
-                let random_x = tile_world_pos.x + offset + rand::gen_range(0.0, inner_size);
-                let random_y = tile_world_pos.y + offset + rand::gen_range(0.0, inner_size);
-
-                // Random direction
-                let random_dir = match rand::gen_range(0, 4) {
-                    0 => Direction::Up,
-                    1 => Direction::Down,
-                    2 => Direction::Left,
-                    _ => Direction::Right,
-                };
-
-                // Create the person with default positioning
-                let mut person = Person::new(tile_pos.x, tile_pos.y, random_dir, texture);
-
-                // Override the default position with our random position
-                person.position = Vec2::new(random_x, random_y);
-
-                // Add the person to our list
-                self.people.push(person);
-            }
-        }
-    }
-
     fn draw(&mut self) {
         clear_background(BLACK);
 
