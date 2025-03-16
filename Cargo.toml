@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "pixel_ui",
     "ui",
     "core",
     "lua_engine"]

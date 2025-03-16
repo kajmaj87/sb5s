@@ -1003,8 +1003,7 @@ impl GameState {
             self.debug.toggle();
         }
 
-        // Toggle between creation modes with 'p' key (only when a tile is selected)
-        if is_key_pressed(KeyCode::P) {
+        if is_key_pressed(KeyCode::E) {
             self.ui_state = UIState::PeopleCreation;
         }
 
@@ -1060,27 +1059,24 @@ impl GameState {
         }
     }
     fn add_person_at_position(&mut self, tile_pos: TilePosition, world_pos: Vec2) {
-        // Only add person if tile exists
-        if self.map.get_tile(&tile_pos).is_some() {
-            if !self.character_textures.is_empty() {
-                let texture_index = rand::gen_range(0, self.character_textures.len());
-                let texture = self.character_textures[texture_index].clone();
+        if !self.character_textures.is_empty() {
+            let texture_index = rand::gen_range(0, self.character_textures.len());
+            let texture = self.character_textures[texture_index].clone();
 
-                // Random direction
-                let random_dir = match rand::gen_range(0, 4) {
-                    0 => Direction::Up,
-                    1 => Direction::Down,
-                    2 => Direction::Left,
-                    _ => Direction::Right,
-                };
+            // Random direction
+            let random_dir = match rand::gen_range(0, 4) {
+                0 => Direction::Up,
+                1 => Direction::Down,
+                2 => Direction::Left,
+                _ => Direction::Right,
+            };
 
-                // Create person and set position directly to mouse position
-                let mut person = Person::new(tile_pos.x, tile_pos.y, random_dir, texture);
-                person.position = world_pos;
+            // Create person and set position directly to mouse position
+            let mut person = Person::new(tile_pos.x, tile_pos.y, random_dir, texture);
+            person.position = world_pos;
 
-                // Add to people list
-                self.people.push(person);
-            }
+            // Add to people list
+            self.people.push(person);
         }
     }
     fn add_person_at_tile(&mut self, tile_pos: TilePosition) {
@@ -1158,7 +1154,7 @@ impl GameState {
                 // Optional: Show tile creation mode text
                 if self.selected_pos.is_some() {
                     draw_text_with_background(
-                        "TILE CREATION MODE (Press P to switch to people mode)",
+                        "TILE CREATION MODE (Press `e` to switch to people mode)",
                         10.0,
                         screen_height() - 60.0,
                         GREEN,
