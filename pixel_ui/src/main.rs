@@ -1,3 +1,4 @@
+use clipboard::{ClipboardContext, ClipboardProvider};
 use macroquad::prelude::*;
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -533,6 +534,328 @@ impl Person {
     }
 }
 
+// New Console struct to manage the console state
+struct Console {
+    visible: bool,
+    history: Vec<String>,
+    current_input: String,
+    cursor_blink_timer: f32,
+    cursor_visible: bool,
+    cursor_position: usize, // Track cursor position for better editing
+    clipboard: Option<ClipboardContext>, // Clipboard handler
+}
+
+impl Console {
+    fn new() -> Self {
+        // Initialize clipboard provider
+        let clipboard = match ClipboardProvider::new() {
+            Ok(ctx) => Some(ctx),
+            Err(e) => {
+                println!("Failed to initialize clipboard: {:?}", e);
+                None
+            }
+        };
+
+        Self {
+            visible: false,
+            history: Vec::new(),
+            current_input: String::new(),
+            cursor_blink_timer: 0.0,
+            cursor_visible: true,
+            cursor_position: 0,
+            clipboard,
+        }
+    }
+
+    fn toggle(&mut self) {
+        self.visible = !self.visible;
+        // Reset cursor blink when showing console
+        if self.visible {
+            self.cursor_visible = true;
+            self.cursor_blink_timer = 0.0;
+        }
+    }
+
+    fn update(&mut self, dt: f32) {
+        if !self.visible {
+            return;
+        }
+
+        // Handle cursor blinking
+        self.cursor_blink_timer += dt;
+        if self.cursor_blink_timer > 0.5 {
+            self.cursor_blink_timer = 0.0;
+            self.cursor_visible = !self.cursor_visible;
+        }
+    }
+
+    fn handle_keyboard_input(&mut self) {
+        if !self.visible {
+            return;
+        }
+        // Handle paste operations (Ctrl+V or Shift+Insert)
+        let paste_requested = (is_key_down(KeyCode::LeftControl) && is_key_pressed(KeyCode::V))
+            || (is_key_down(KeyCode::LeftShift) && is_key_pressed(KeyCode::Insert))
+            || (is_key_down(KeyCode::RightShift) && is_key_pressed(KeyCode::Insert));
+
+        if paste_requested {
+            if let Some(ref mut ctx) = self.clipboard {
+                if let Ok(clipboard_text) = ctx.get_contents() {
+                    // Insert clipboard text at cursor position
+                    let before = &self.current_input[..self.cursor_position];
+                    let after = &self.current_input[self.cursor_position..];
+                    self.current_input = format!("{}{}{}", before, clipboard_text, after);
+                    self.cursor_position += clipboard_text.len();
+                }
+            }
+        }
+
+        // Handle copy (Ctrl+C) or Ctrl+Insert
+        let copy_requested = is_key_down(KeyCode::LeftControl) && is_key_pressed(KeyCode::C)
+            || (is_key_down(KeyCode::LeftControl) && is_key_pressed(KeyCode::Insert));
+        if copy_requested {
+            if let Some(ref mut ctx) = self.clipboard {
+                let _ = ctx.set_contents(self.current_input.clone());
+                self.history.push("Text copied to clipboard".to_string());
+            }
+        }
+
+        // Handle backspace - delete character before cursor
+        if is_key_pressed(KeyCode::Backspace) && self.cursor_position > 0 {
+            self.current_input.remove(self.cursor_position - 1);
+            self.cursor_position -= 1;
+        }
+
+        // Handle delete - delete character at cursor
+        if is_key_pressed(KeyCode::Delete) && self.cursor_position < self.current_input.len() {
+            self.current_input.remove(self.cursor_position);
+        }
+
+        // Handle arrow keys for cursor movement
+        if is_key_pressed(KeyCode::Left) && self.cursor_position > 0 {
+            self.cursor_position -= 1;
+        }
+        if is_key_pressed(KeyCode::Right) && self.cursor_position < self.current_input.len() {
+            self.cursor_position += 1;
+        }
+
+        // Handle Enter - add newline (regular Enter) or execute (Shift+Enter)
+        if is_key_pressed(KeyCode::Enter) {
+            let shift = is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift);
+
+            if shift {
+                // Execute command with Shift+Enter
+                if !self.current_input.is_empty() {
+                    self.execute_command();
+                }
+            } else {
+                // Insert newline at cursor position
+                let before = &self.current_input[..self.cursor_position];
+                let after = &self.current_input[self.cursor_position..];
+                self.current_input = format!("{}\n{}", before, after);
+                self.cursor_position += 1;
+            }
+        }
+
+        // Handle space
+        if is_key_pressed(KeyCode::Space) {
+            self.insert_char(' ');
+        }
+
+        // Check shift state for capital letters
+        let shift = is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift);
+
+        // Handle letter keys
+        let alpha_keys = [
+            (KeyCode::A, 'a', 'A'),
+            (KeyCode::B, 'b', 'B'),
+            (KeyCode::C, 'c', 'C'),
+            (KeyCode::D, 'd', 'D'),
+            (KeyCode::E, 'e', 'E'),
+            (KeyCode::F, 'f', 'F'),
+            (KeyCode::G, 'g', 'G'),
+            (KeyCode::H, 'h', 'H'),
+            (KeyCode::I, 'i', 'I'),
+            (KeyCode::J, 'j', 'J'),
+            (KeyCode::K, 'k', 'K'),
+            (KeyCode::L, 'l', 'L'),
+            (KeyCode::M, 'm', 'M'),
+            (KeyCode::N, 'n', 'N'),
+            (KeyCode::O, 'o', 'O'),
+            (KeyCode::P, 'p', 'P'),
+            (KeyCode::Q, 'q', 'Q'),
+            (KeyCode::R, 'r', 'R'),
+            (KeyCode::S, 's', 'S'),
+            (KeyCode::T, 't', 'T'),
+            (KeyCode::U, 'u', 'U'),
+            (KeyCode::V, 'v', 'V'),
+            (KeyCode::W, 'w', 'W'),
+            (KeyCode::X, 'x', 'X'),
+            (KeyCode::Y, 'y', 'Y'),
+            (KeyCode::Z, 'z', 'Z'),
+        ];
+
+        for (key, lower, upper) in alpha_keys.iter() {
+            if is_key_pressed(*key) {
+                self.insert_char(if shift { *upper } else { *lower });
+            }
+        }
+
+        // Handle number keys
+        let num_keys = [
+            (KeyCode::Key0, '0', ')'),
+            (KeyCode::Key1, '1', '!'),
+            (KeyCode::Key2, '2', '@'),
+            (KeyCode::Key3, '3', '#'),
+            (KeyCode::Key4, '4', '$'),
+            (KeyCode::Key5, '5', '%'),
+            (KeyCode::Key6, '6', '^'),
+            (KeyCode::Key7, '7', '&'),
+            (KeyCode::Key8, '8', '*'),
+            (KeyCode::Key9, '9', '('),
+        ];
+
+        for (key, normal, shifted) in num_keys.iter() {
+            if is_key_pressed(*key) {
+                self.insert_char(if shift { *shifted } else { *normal });
+            }
+        }
+
+        // Handle punctuation keys
+        let punct_keys = [
+            (KeyCode::Minus, '-', '_'),
+            (KeyCode::Equal, '=', '+'),
+            (KeyCode::LeftBracket, '[', '{'),
+            (KeyCode::RightBracket, ']', '}'),
+            (KeyCode::Semicolon, ';', ':'),
+            (KeyCode::Apostrophe, '\'', '"'),
+            (KeyCode::Comma, ',', '<'),
+            (KeyCode::Period, '.', '>'),
+            (KeyCode::Slash, '/', '?'),
+            (KeyCode::Backslash, '\\', '|'),
+        ];
+
+        for (key, normal, shifted) in punct_keys.iter() {
+            if is_key_pressed(*key) {
+                self.insert_char(if shift { *shifted } else { *normal });
+            }
+        }
+    }
+
+    fn insert_char(&mut self, c: char) {
+        // Insert character at cursor position
+        let before = &self.current_input[..self.cursor_position];
+        let after = &self.current_input[self.cursor_position..];
+        self.current_input = format!("{}{}{}", before, c, after);
+        self.cursor_position += 1;
+    }
+
+    fn execute_command(&mut self) {
+        // Add user input to history
+        let command = self.current_input.clone();
+
+        // For now, just echo what was typed
+        let output = format!("You typed: {}", command);
+        self.history.push(format!("> {}", command));
+        self.history.push(output);
+
+        // Clear input after executing
+        self.current_input.clear();
+        self.cursor_position = 0;
+
+        // Limit history size
+        while self.history.len() > 100 {
+            self.history.remove(0);
+        }
+    }
+
+    fn draw(&self) {
+        if !self.visible {
+            return;
+        }
+
+        // Calculate console dimensions
+        let console_height = screen_height() * 0.4;
+
+        // Draw semi-transparent background (using existing color)
+        draw_rectangle(
+            0.0,
+            0.0,
+            screen_width(),
+            console_height,
+            TEXT_BACKGROUND_COLOR,
+        );
+
+        // Draw input area with slightly darker background
+        let input_area_height = 60.0; // More space for multiline
+        draw_rectangle(
+            0.0,
+            console_height - input_area_height,
+            screen_width(),
+            input_area_height,
+            Color::new(0.0, 0.0, 0.0, 0.8),
+        );
+
+        // Draw command prompt
+        draw_text(
+            "> ",
+            10.0,
+            console_height - input_area_height + 20.0,
+            20.0,
+            WHITE,
+        );
+
+        // Split input by lines and draw with cursor
+        let lines = self.current_input.split('\n').collect::<Vec<_>>();
+        let mut current_pos = 0;
+
+        for (i, line) in lines.iter().enumerate() {
+            let y_offset = console_height - input_area_height + 20.0 + (i as f32 * 20.0);
+
+            // Draw line
+            if i == 0 {
+                // First line includes prompt offset
+                draw_text(line, 30.0, y_offset, 20.0, WHITE);
+            } else {
+                draw_text(line, 10.0, y_offset, 20.0, WHITE);
+            }
+
+            // Check if cursor is in this line
+            if current_pos <= self.cursor_position
+                && self.cursor_position <= current_pos + line.len()
+            {
+                if self.cursor_visible {
+                    // Draw cursor at correct position within this line
+                    let cursor_offset = self.cursor_position - current_pos;
+                    let prefix = &line[..cursor_offset.min(line.len())];
+                    let cursor_x = if i == 0 { 30.0 } else { 10.0 }
+                        + measure_text(prefix, None, 20 as u16, 1.0).width;
+
+                    draw_text("_", cursor_x, y_offset, 20.0, WHITE);
+                }
+            }
+
+            // Move counter past this line plus the newline character
+            current_pos += line.len() + 1;
+        }
+
+        // Draw command history (most recent at the bottom)
+        let line_height = 20.0;
+        let visible_lines = ((console_height - input_area_height) / line_height) as usize;
+
+        let start_idx = if self.history.len() > visible_lines {
+            self.history.len() - visible_lines
+        } else {
+            0
+        };
+
+        for (i, line) in self.history[start_idx..].iter().enumerate() {
+            let y = (i as f32) * line_height + 20.0;
+            draw_text(line, 10.0, y, 20.0, WHITE);
+        }
+    }
+}
+
 struct CameraController {
     position: Vec2,
     zoom: f32,
@@ -922,6 +1245,7 @@ struct GameState {
     ui_state: UIState,
     character_textures: Vec<Texture2D>,
     last_person_pos: Option<Vec2>,
+    console: Console,
 }
 
 impl GameState {
@@ -981,6 +1305,7 @@ impl GameState {
             ui_state: UIState::TileCreation, // Default state
             character_textures,
             last_person_pos: None,
+            console: Console::new(),
         }
     }
 
@@ -989,11 +1314,22 @@ impl GameState {
         let dt = (current_time - self.last_frame_time) as f32;
         self.last_frame_time = current_time;
 
-        // Update people
+        // Toggle console with backtick key
+        if is_key_pressed(KeyCode::GraveAccent) {
+            self.console.toggle();
+        }
+        self.console.update(dt);
+        if self.console.visible {
+            self.console.handle_keyboard_input();
+
+            // Skip other game updates when console is open
+            return;
+        }
+
+        // Existing update code
         for person in &mut self.people {
             person.update(dt);
         }
-
         self.input.update();
         self.camera.update(&self.input);
         self.debug.update();
@@ -1133,6 +1469,9 @@ impl GameState {
             self.selected_pos.as_ref(),
             &self.input,
         );
+
+        // Draw console
+        self.console.draw();
     }
 }
 // Function to find character textures using standard fs
