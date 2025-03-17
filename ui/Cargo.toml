@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-core = { path = "../core" }
 lua_engine = { path = "../lua_engine" }
 # maybe it would be good to get rid of this dependency and use a wrapper in lua_engine
 mlua = { version = "0.10.3", features = ["luau"] }

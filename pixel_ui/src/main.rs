@@ -3,6 +3,7 @@ use macroquad::prelude::*;
 use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
 
 // Constants
 mod config {
@@ -88,6 +89,7 @@ mod utils {
 
 use crate::utils::*;
 use config::*;
+use lua_engine::lua_engine::LuaEngine;
 
 #[derive(Clone)]
 struct Tile {
@@ -541,15 +543,16 @@ struct Console {
     current_input: String,
     cursor_blink_timer: f32,
     cursor_visible: bool,
-    cursor_position: usize,       // Track cursor position for better editing
-    clipboard: Option<Clipboard>, // Clipboard handler
+    cursor_position: usize,
+    clipboard: Option<Clipboard>,
+    lua_engine: Arc<RwLock<LuaEngine>>, // Added LuaEngine reference
 }
 
 impl Console {
-    fn new() -> Self {
-        // Initialize clipboard provider
+    fn new(lua_engine: Arc<RwLock<LuaEngine>>) -> Self {
+        // Initialize arboard clipboard
         let clipboard = match Clipboard::new() {
-            Ok(ctx) => Some(ctx),
+            Ok(clipboard) => Some(clipboard),
             Err(e) => {
                 println!("Failed to initialize clipboard: {:?}", e);
                 None
@@ -564,6 +567,37 @@ impl Console {
             cursor_visible: true,
             cursor_position: 0,
             clipboard,
+            lua_engine,
+        }
+    }
+
+    fn execute_command(&mut self) {
+        let command = self.current_input.clone();
+
+        // Add user input to history
+        self.history.push(format!("> {}", command));
+
+        // Execute the script with LuaEngine
+        let result = {
+            let lua_engine = self.lua_engine.read().unwrap();
+            lua_engine.run_script(&command)
+        };
+
+        // Display result in history
+        match result {
+            Ok(_) => self
+                .history
+                .push("Script executed successfully.".to_string()),
+            Err(err) => self.history.push(format!("Error: {}", err)),
+        }
+
+        // Don't clear the input - leave it for further editing
+        // Instead, just reset cursor position to end of text for convenience
+        self.cursor_position = self.current_input.len();
+
+        // Limit history size
+        while self.history.len() > 100 {
+            self.history.remove(0);
         }
     }
 
@@ -748,25 +782,6 @@ impl Console {
         let after = &self.current_input[self.cursor_position..];
         self.current_input = format!("{}{}{}", before, c, after);
         self.cursor_position += 1;
-    }
-
-    fn execute_command(&mut self) {
-        // Add user input to history
-        let command = self.current_input.clone();
-
-        // For now, just echo what was typed
-        let output = format!("You typed: {}", command);
-        self.history.push(format!("> {}", command));
-        self.history.push(output);
-
-        // Clear input after executing
-        self.current_input.clear();
-        self.cursor_position = 0;
-
-        // Limit history size
-        while self.history.len() > 100 {
-            self.history.remove(0);
-        }
     }
 
     fn draw(&self) {
@@ -1248,10 +1263,12 @@ struct GameState {
     character_textures: Vec<Texture2D>,
     last_person_pos: Option<Vec2>,
     console: Console,
+    lua_engine: Arc<RwLock<LuaEngine>>,
 }
 
 impl GameState {
     async fn new() -> Self {
+        let lua_engine = Arc::new(RwLock::new(LuaEngine::new()));
         let map = TileMap::new().await;
         let camera = CameraController::new(map.get_initial_center());
 
@@ -1307,7 +1324,8 @@ impl GameState {
             ui_state: UIState::TileCreation, // Default state
             character_textures,
             last_person_pos: None,
-            console: Console::new(),
+            console: Console::new(lua_engine.clone()),
+            lua_engine,
         }
     }
 

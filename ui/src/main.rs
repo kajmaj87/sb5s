@@ -1,27 +1,17 @@
 use std::sync::{Arc, RwLock};
 mod ui;
 
-use core::CoreApi;
 use lua_engine::lua_engine::LuaEngine;
 use ui::MyApp;
 
 fn main() -> eframe::Result<()> {
-    // Create the Rust Core
-    let core = Arc::new(RwLock::new(CoreApi::new()));
-
     // Create the Lua Engine, exposing the core API to Lua
-    let lua_engine = Arc::new(RwLock::new(LuaEngine::new(core)));
+    let lua_engine = Arc::new(RwLock::new(LuaEngine::new()));
 
     // Run the UI
     let options = eframe::NativeOptions::default();
     let app = MyApp::new(lua_engine.clone());
-    if let Err(err) = lua_engine
-        .write()
-        .unwrap()
-        .lua
-        .load("require('init')")
-        .exec()
-    {
+    if let Err(err) = lua_engine.write().unwrap().run_script("require('init')") {
         eprintln!("Unable to load init.lua due to lua error: {}", err);
     }
     eframe::run_native(

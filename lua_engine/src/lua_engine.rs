@@ -7,7 +7,8 @@ pub struct LuaEngine {
 }
 
 impl LuaEngine {
-    pub fn new(core: Arc<RwLock<CoreApi>>) -> Self {
+    pub fn new() -> Self {
+        let core = Arc::new(RwLock::new(CoreApi::new()));
         let lua = Lua::new();
         let globals = lua.globals();
 

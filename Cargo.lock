@@ -1951,7 +1951,6 @@ dependencies = [
 name = "sb5s-egui"
 version = "0.1.0"
 dependencies = [
- "core",
  "eframe",
  "egui",
  "egui_plot",
@@ -1964,6 +1963,7 @@ name = "sb5s-pixel"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "lua_engine",
  "macroquad",
 ]
 
