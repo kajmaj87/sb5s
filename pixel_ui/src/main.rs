@@ -1,4 +1,4 @@
-use clipboard::{ClipboardContext, ClipboardProvider};
+use arboard::Clipboard;
 use macroquad::prelude::*;
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -541,14 +541,14 @@ struct Console {
     current_input: String,
     cursor_blink_timer: f32,
     cursor_visible: bool,
-    cursor_position: usize, // Track cursor position for better editing
-    clipboard: Option<ClipboardContext>, // Clipboard handler
+    cursor_position: usize,       // Track cursor position for better editing
+    clipboard: Option<Clipboard>, // Clipboard handler
 }
 
 impl Console {
     fn new() -> Self {
         // Initialize clipboard provider
-        let clipboard = match ClipboardProvider::new() {
+        let clipboard = match Clipboard::new() {
             Ok(ctx) => Some(ctx),
             Err(e) => {
                 println!("Failed to initialize clipboard: {:?}", e);
@@ -600,7 +600,7 @@ impl Console {
 
         if paste_requested {
             if let Some(ref mut ctx) = self.clipboard {
-                if let Ok(clipboard_text) = ctx.get_contents() {
+                if let Ok(clipboard_text) = ctx.get_text() {
                     // Insert clipboard text at cursor position
                     let before = &self.current_input[..self.cursor_position];
                     let after = &self.current_input[self.cursor_position..];
@@ -615,7 +615,7 @@ impl Console {
             || (is_key_down(KeyCode::LeftControl) && is_key_pressed(KeyCode::Insert));
         if copy_requested {
             if let Some(ref mut ctx) = self.clipboard {
-                let _ = ctx.set_contents(self.current_input.clone());
+                let _ = ctx.set_text(self.current_input.clone());
                 self.history.push("Text copied to clipboard".to_string());
             }
         }
