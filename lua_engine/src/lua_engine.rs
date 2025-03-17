@@ -1,3 +1,4 @@
+use crate::docs;
 use core::CoreApi;
 use mlua::{Lua, Result as LuaResult, Table};
 use std::sync::{Arc, RwLock};
@@ -35,6 +36,8 @@ impl LuaEngine {
         // Set the API table as a global
         globals.set("api", api_table).unwrap();
 
+        // Set up documentation helpers
+        Self::setup_documentation(&lua);
         Self { lua }
     }
 
@@ -225,7 +228,162 @@ impl LuaEngine {
         table.set("count", event_count).unwrap();
     }
 
+    fn setup_documentation(lua: &Lua) {
+        // Create the docs table
+        let docs_table = lua.create_table().unwrap();
+        let globals = lua.globals();
+        globals.set("docs", docs_table.clone()).unwrap();
+
+        // Get the API documentation from the generated code
+        let api_docs = docs::get_api_docs();
+
+        // Convert API docs to Lua tables
+        for (module_name, module_docs) in api_docs {
+            let module_table = lua.create_table().unwrap();
+            docs_table
+                .set(module_name.clone(), module_table.clone())
+                .unwrap();
+
+            for (method_name, method_doc) in module_docs.methods {
+                let method_table = lua.create_table().unwrap();
+                method_table
+                    .set("description", method_doc.description)
+                    .unwrap();
+
+                // Set parameters
+                let params_table = lua.create_table().unwrap();
+                for (i, param) in method_doc.params.iter().enumerate() {
+                    let param_table = lua.create_table().unwrap();
+                    param_table.set("name", param.name.clone()).unwrap();
+                    param_table.set("type", param.type_name.clone()).unwrap();
+                    param_table
+                        .set("description", param.description.clone())
+                        .unwrap();
+                    params_table.set(i + 1, &param_table).unwrap();
+                    params_table.set(param.name.clone(), param_table).unwrap();
+                }
+
+                method_table.set("params", params_table).unwrap();
+                method_table.set("returns", method_doc.returns).unwrap();
+
+                module_table.set(method_name, method_table).unwrap();
+            }
+        }
+
+        // Add help function
+        let help_fn = lua.create_function(|ctx, topic: Option<String>| {
+            let docs: Table = ctx.globals().get("docs")?;
+
+            match topic {
+                None => {
+                    // Level 1: List all modules
+                    let mut result = String::from("Available modules:\n");
+
+                    for pair in docs.pairs::<String, Table>() {
+                        let (module, _) = pair?;
+                        result.push_str(&format!("  {}\n", module));
+                    }
+
+                    result.push_str("\nUse help(\"module\") to see available methods.");
+                    Ok(result)
+                },
+                Some(topic) => {
+                    // Check if this is a module name or a method name
+                    let parts: Vec<&str> = topic.split('.').collect();
+
+                    if parts.len() == 1 {
+                        // Level 2: List all methods in a module
+                        let module = parts[0];
+                        let module_docs: LuaResult<Table> = docs.get(module);
+
+                        if let Ok(module_table) = module_docs {
+                            let mut result = format!("Methods in {} module:\n", module);
+
+                            for pair in module_table.pairs::<String, Table>() {
+                                let (method, _) = pair?;
+                                result.push_str(&format!("  {}.{}\n", module, method));
+                            }
+
+                            result.push_str("\nUse help(\"module.method\") to see method details.");
+                            Ok(result)
+                        } else {
+                            Ok(format!("Module '{}' not found. Use help() to see available modules.", module))
+                        }
+                    } else if parts.len() == 2 {
+                        // Level 3: Show details of a specific method
+                        let module = parts[0];
+                        let method = parts[1];
+
+                        // Get the module table
+                        let module_docs: LuaResult<Table> = docs.get(module);
+                        if let Ok(module_table) = module_docs {
+                            // Get the method documentation
+                            let method_docs: LuaResult<Table> = module_table.get(method);
+                            if let Ok(doc) = method_docs {
+                                // Format and return documentation
+                                let desc: String = doc.get("description")?;
+                                let params: Table = doc.get("params")?;
+                                let returns: String = doc.get("returns")?;
+
+                                let mut result = format!("--- {}\n\n", desc);
+                                result.push_str("Parameters:\n");
+
+                                // List parameters
+                                let param_count: i32 = params.len()?;
+                                for i in 1..=param_count {
+                                    let param: Table = params.get(i)?;
+                                    let name: String = param.get("name")?;
+                                    let type_name: String = param.get("type")?;
+                                    let param_desc: String = param.get("description").unwrap_or_default();
+
+                                    result.push_str(&format!("  {} ({})", name, type_name));
+                                    if !param_desc.is_empty() {
+                                        result.push_str(&format!(" - {}", param_desc));
+                                    }
+                                    result.push('\n');
+                                }
+
+                                result.push_str(&format!("\nReturns: {}", returns));
+                                Ok(result)
+                            } else {
+                                Ok(format!("Method '{}.{}' not found. Use help('{}') to see available methods.",
+                                           module, method, module))
+                            }
+                        } else {
+                            Ok(format!("Module '{}' not found. Use help() to see available modules.", module))
+                        }
+                    } else {
+                        Ok(format!("Invalid topic format: '{}'. Use help(), help(\"module\"), or help(\"module.method\").", topic))
+                    }
+                }
+            }
+        }).unwrap();
+
+        globals.set("help", help_fn).unwrap();
+    }
     pub fn run_script(&self, script: &str) -> LuaResult<()> {
         self.lua.load(script).exec()
+    }
+
+    pub fn execute(&self, code: &str) -> Result<String, String> {
+        match self.lua.load(code).eval::<mlua::Value>() {
+            Ok(value) => {
+                // Convert the Lua value to a string representation
+                let result = match value {
+                    mlua::Value::Nil => "nil".to_string(),
+                    mlua::Value::Boolean(b) => b.to_string(),
+                    mlua::Value::Integer(i) => i.to_string(),
+                    mlua::Value::Number(n) => n.to_string(),
+                    mlua::Value::String(s) => s.to_str().unwrap().to_string(),
+                    mlua::Value::Table(_) => "table".to_string(),
+                    mlua::Value::Function(_) => "[function]".to_string(),
+                    _ => "[value]".to_string(),
+                };
+
+                // Return the result string
+                Ok(result)
+            }
+            Err(e) => Err(e.to_string()),
+        }
     }
 }

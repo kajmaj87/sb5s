@@ -2,7 +2,10 @@
 name = "lua_engine"
 version = "0.1.0"
 edition = "2024"
+build = "build.rs"
 
 [dependencies]
 core = { path = "../core" }
 mlua = { version = "0.10.3", features = ["luau"] }
+[build-dependencies]
+regex = "1.11.1"

@@ -14,4 +14,8 @@ button("Click Me", function()
         end)
     end)
 end)
-lua_console("print('Hello, World!')")
+lua_console("help()")
+local help_old = help;
+help = function(a)
+    print(help_old(a))
+end

@@ -2,12 +2,14 @@ mod event_api;
 mod location_api;
 mod person_api;
 
-use crate::domain::entity::person::{Person, PersonId};
 use crate::domain::service::person_service::PersonService;
 use crate::infrastructure::event_store::{create_event_store, EventStore};
 use crate::infrastructure::projection::{LocationOccupancyProjection, ProjectionManager};
 use crate::repo::VecRepository;
 use std::sync::{Arc, Mutex};
+
+pub use crate::domain::entity::person::Person;
+use crate::domain::entity::person::PersonId;
 
 /// Main API facade for the core module
 pub struct CoreApi {

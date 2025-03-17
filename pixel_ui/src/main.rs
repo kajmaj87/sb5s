@@ -561,7 +561,9 @@ impl Console {
 
         Self {
             visible: false,
-            history: Vec::new(),
+            history: vec![
+                "Welcome to the console! Type help() to start exploring the api.".to_string(),
+            ],
             current_input: String::new(),
             cursor_blink_timer: 0.0,
             cursor_visible: true,
@@ -580,14 +582,12 @@ impl Console {
         // Execute the script with LuaEngine
         let result = {
             let lua_engine = self.lua_engine.read().unwrap();
-            lua_engine.run_script(&command)
+            lua_engine.execute(&command)
         };
 
         // Display result in history
         match result {
-            Ok(_) => self
-                .history
-                .push("Script executed successfully.".to_string()),
+            Ok(result) => self.history.push(result),
             Err(err) => self.history.push(format!("Error: {}", err)),
         }
 
