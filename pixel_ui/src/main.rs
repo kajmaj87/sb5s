@@ -1209,7 +1209,9 @@ impl DebugWindow {
             self.fps_history.iter().sum::<i32>() as f32 / self.fps_history.len().max(1) as f32;
         debug_texts.push((format!("FPS: {} (Avg: {:.1})", get_fps(), avg_fps), GREEN));
         debug_texts.push((
-            "Shift+D to toggle debug mode window".parse().unwrap(),
+            "Shift+D to toggle debug mode window, ` (accent) to open console"
+                .parse()
+                .unwrap(),
             WHITE,
         ));
 
