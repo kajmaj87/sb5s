@@ -5,7 +5,8 @@ edition = "2024"
 build = "build.rs"
 
 [dependencies]
-core = { path = "../core" }
+logic = { path = "../logic" }
 mlua = { version = "0.10.3", features = ["luau"] }
+tokio = "1.44.1"
 [build-dependencies]
 regex = "1.11.1"

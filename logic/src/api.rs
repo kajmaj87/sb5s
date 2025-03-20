@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 pub use crate::domain::entity::person::Person;
 use crate::domain::entity::person::PersonId;
 
-/// Main API facade for the core module
+/// Main API facade for the logic module
 pub struct CoreApi {
     person: PersonApi,
     location: LocationApi,
@@ -32,7 +32,7 @@ pub struct EventApi {
     store: Arc<Mutex<EventStore>>,
 }
 impl CoreApi {
-    /// Create a new instance of the core API
+    /// Create a new instance of the logic API
     pub fn new() -> Self {
         // Create the event store
         let (event_store, event_sender) = create_event_store();
