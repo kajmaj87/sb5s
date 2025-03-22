@@ -978,8 +978,12 @@ async fn main() {
     let (command_tx, command_rx) = mpsc::channel();
     let lua_engine = Arc::new(Mutex::new(LuaEngine::new(command_rx)));
     let mut game = GameState::new(command_tx, lua_engine.clone()).await;
-    if let Err(e) = lua_engine.lock().unwrap().run_script("require('init')") {
-        println!("Error running lua script: {:?}", e);
+    if let Err(e) = lua_engine.lock().unwrap().run_script(
+        r#"-- Add scripts directory to Lua's package path
+        package.path = "./scripts/?.lua;" .. package.path
+        require('init')"#,
+    ) {
+        println!("Error during lua initialization: {:?}", e);
     }
     // Create game state with client
     // spawn thread to run the lua engine
