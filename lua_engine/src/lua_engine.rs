@@ -1,46 +1,105 @@
 use crate::docs;
-use core::CoreApi;
-use mlua::{Lua, Result as LuaResult, Table};
-use std::sync::{Arc, RwLock};
+use logic::CoreApi;
+use mlua::{Function, Lua, Result as LuaResult, Table, Value};
+use std::collections::HashMap;
+use std::sync::{mpsc, Arc, RwLock};
+
+// Commands that can be sent to the Lua worker
+pub enum LuaCommand {
+    Execute {
+        code: String,
+        response_tx: mpsc::Sender<Result<String, String>>,
+    },
+    Shutdown,
+}
+
+// Response from LuaEngine
+pub enum LuaResponse {
+    // Add response types if needed
+}
 
 pub struct LuaEngine {
     pub lua: Lua,
+    callbacks: HashMap<u32, Function>,
+    next_callback_id: u32,
+    command_rx: mpsc::Receiver<LuaCommand>,
 }
 
 impl LuaEngine {
-    pub fn new() -> Self {
-        let core = Arc::new(RwLock::new(CoreApi::new()));
+    // Creates a new LuaEngine that receives commands from a channel
+    pub fn new(command_rx: mpsc::Receiver<LuaCommand>) -> Self {
         let lua = Lua::new();
         let globals = lua.globals();
 
-        // Create the API tables
+        // Initialize core API
+        let core = Arc::new(RwLock::new(CoreApi::new()));
+
+        // Create API tables
         let person_table = lua.create_table().unwrap();
         let location_table = lua.create_table().unwrap();
         let event_table = lua.create_table().unwrap();
 
-        // Set up the person API
+        // Setup the APIs
         Self::setup_person_api(&lua, &person_table, Arc::clone(&core));
-
-        // Set up the location API
         Self::setup_location_api(&lua, &location_table, Arc::clone(&core));
-
-        // Set up the event API
         Self::setup_event_api(&lua, &event_table, Arc::clone(&core));
 
-        // Create the main API table
+        // Create main API table
         let api_table = lua.create_table().unwrap();
         api_table.set("person", person_table).unwrap();
         api_table.set("location", location_table).unwrap();
         api_table.set("event", event_table).unwrap();
 
-        // Set the API table as a global
+        // Set API as global
         globals.set("api", api_table).unwrap();
 
-        // Set up documentation helpers
+        // Setup documentation
         Self::setup_documentation(&lua);
-        Self { lua }
+
+        Self {
+            lua,
+            callbacks: HashMap::new(),
+            next_callback_id: 1,
+            command_rx,
+        }
     }
 
+    // Process a single command - call this in a loop from your thread
+    pub fn process_command(&mut self) -> bool {
+        match self.command_rx.recv() {
+            Ok(cmd) => {
+                match cmd {
+                    LuaCommand::Execute { code, response_tx } => {
+                        let result = match self.lua.load(&code).eval::<Value>() {
+                            Ok(value) => {
+                                // Convert Lua value to string representation
+                                let result = match value {
+                                    Value::Nil => "nil".to_string(),
+                                    Value::Boolean(b) => b.to_string(),
+                                    Value::Integer(i) => i.to_string(),
+                                    Value::Number(n) => n.to_string(),
+                                    Value::String(s) => s.to_str().unwrap().to_string(),
+                                    Value::Table(_) => "table".to_string(),
+                                    Value::Function(_) => "[function]".to_string(),
+                                    _ => "[value]".to_string(),
+                                };
+                                Ok(result)
+                            }
+                            Err(e) => Err(e.to_string()),
+                        };
+                        let _ = response_tx.send(result);
+                    }
+                    LuaCommand::Shutdown => return false,
+                    _ => {}
+                }
+                true
+            }
+            Err(_) => false, // Channel closed
+        }
+    }
+    pub fn run(&mut self) {
+        while self.process_command() {}
+    }
     fn setup_person_api(lua: &Lua, table: &Table, core: Arc<RwLock<CoreApi>>) {
         // Expose api.person.create to Lua
         let core_clone = Arc::clone(&core);
@@ -286,7 +345,7 @@ impl LuaEngine {
 
                     result.push_str("\nUse help(\"module\") to see available methods.");
                     Ok(result)
-                },
+                }
                 Some(topic) => {
                     // Check if this is a module name or a method name
                     let parts: Vec<&str> = topic.split('.').collect();
@@ -360,30 +419,5 @@ impl LuaEngine {
         }).unwrap();
 
         globals.set("help", help_fn).unwrap();
-    }
-    pub fn run_script(&self, script: &str) -> LuaResult<()> {
-        self.lua.load(script).exec()
-    }
-
-    pub fn execute(&self, code: &str) -> Result<String, String> {
-        match self.lua.load(code).eval::<mlua::Value>() {
-            Ok(value) => {
-                // Convert the Lua value to a string representation
-                let result = match value {
-                    mlua::Value::Nil => "nil".to_string(),
-                    mlua::Value::Boolean(b) => b.to_string(),
-                    mlua::Value::Integer(i) => i.to_string(),
-                    mlua::Value::Number(n) => n.to_string(),
-                    mlua::Value::String(s) => s.to_str().unwrap().to_string(),
-                    mlua::Value::Table(_) => "table".to_string(),
-                    mlua::Value::Function(_) => "[function]".to_string(),
-                    _ => "[value]".to_string(),
-                };
-
-                // Return the result string
-                Ok(result)
-            }
-            Err(e) => Err(e.to_string()),
-        }
     }
 }

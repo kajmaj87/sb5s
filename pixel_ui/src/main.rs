@@ -1,9 +1,16 @@
+mod lua_ui_integration;
+
 use arboard::Clipboard;
+use macroquad::hash;
 use macroquad::prelude::*;
+use macroquad::ui::{root_ui, widgets};
 use std::collections::{HashMap, VecDeque};
-use std::fs;
+use std::os::unix::raw::uid_t;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::process::exit;
+use std::sync::mpsc::Sender;
+use std::sync::{mpsc, Arc, Mutex, RwLock};
+use std::{fs, thread};
 
 // Constants
 mod config {
@@ -25,7 +32,8 @@ mod config {
     pub const TEXT_PADDING: f32 = 15.0;
     pub const PERSON_SOURCE_TILE_SIZE: f32 = 32.0;
     pub const PERSON_TILE_SIZE: f32 = 32.0;
-    pub const PEOPLE_BENCHMARK_SIZE: usize = 0;
+    pub const PEOPLE_BENCHMARK_SIZE: usize = 100;
+    pub const PEOPLE_BENCHMARK_DISPERSION: i32 = 1;
 }
 
 mod utils {
@@ -87,9 +95,11 @@ mod utils {
     }
 }
 
+use crate::lua_ui_integration::LuaUIBindings;
 use crate::utils::*;
 use config::*;
-use lua_engine::lua_engine::LuaEngine;
+use lua_engine::lua_client::LuaClient;
+use lua_engine::lua_engine::{LuaCommand, LuaEngine};
 
 #[derive(Clone)]
 struct Tile {
@@ -163,7 +173,7 @@ impl TileMap {
         let tileset = load_texture("assets/tileset.png").await.unwrap();
         tileset.set_filter(FilterMode::Nearest);
 
-        let tiles_per_row = (tileset.width() / SOURCE_TILE_SIZE).floor() as f32;
+        let tiles_per_row = (tileset.width() / SOURCE_TILE_SIZE).floor();
         let width = 16;
         let height = 16;
         let mut tiles = HashMap::new();
@@ -173,7 +183,7 @@ impl TileMap {
                 tiles.insert(
                     (x as i32, y as i32),
                     Tile {
-                        id: (x + y * width) % 256,
+                        id: (x + y * height) % 256,
                     },
                 );
             }
@@ -540,17 +550,15 @@ impl Person {
 struct Console {
     visible: bool,
     history: Vec<String>,
-    current_input: String,
-    cursor_blink_timer: f32,
-    cursor_visible: bool,
-    cursor_position: usize,
+    editbox: String,
     clipboard: Option<Clipboard>,
-    lua_engine: Arc<RwLock<LuaEngine>>, // Added LuaEngine reference
+    lua_client: Arc<LuaClient>,
+    pending_commands: Vec<mpsc::Receiver<Result<String, String>>>,
 }
 
 impl Console {
-    fn new(lua_engine: Arc<RwLock<LuaEngine>>) -> Self {
-        // Initialize arboard clipboard
+    fn new(lua_client: Arc<LuaClient>) -> Self {
+        // Initialize clipboard
         let clipboard = match Clipboard::new() {
             Ok(clipboard) => Some(clipboard),
             Err(e) => {
@@ -564,245 +572,119 @@ impl Console {
             history: vec![
                 "Welcome to the console! Type help() to start exploring the api.".to_string(),
             ],
-            current_input: String::new(),
-            cursor_blink_timer: 0.0,
-            cursor_visible: true,
-            cursor_position: 0,
+            editbox: String::new(),
             clipboard,
-            lua_engine,
+            lua_client,
+            pending_commands: Default::default(),
         }
     }
 
     fn execute_command(&mut self) {
-        let command = self.current_input.clone();
+        let command = self.editbox.clone();
+        if command.is_empty() {
+            return;
+        }
 
         // Add user input to history
         self.history.push(format!("> {}", command));
 
         // Execute the script with LuaEngine
-        let result = {
-            let lua_engine = self.lua_engine.read().unwrap();
-            lua_engine.execute(&command)
-        };
-
-        // Display result in history
-        match result {
-            Ok(result) => self.history.push(result),
-            Err(err) => self.history.push(format!("Error: {}", err)),
-        }
-
-        // Don't clear the input - leave it for further editing
-        // Instead, just reset cursor position to end of text for convenience
-        self.cursor_position = self.current_input.len();
-
-        // Limit history size
-        while self.history.len() > 100 {
-            self.history.remove(0);
-        }
+        let pending_result = self.lua_client.execute_non_blocking(command.as_str());
+        self.pending_commands.push(pending_result);
     }
 
     fn toggle(&mut self) {
         self.visible = !self.visible;
-        // Reset cursor blink when showing console
-        if self.visible {
-            self.cursor_visible = true;
-            self.cursor_blink_timer = 0.0;
-        }
     }
 
-    fn update(&mut self, dt: f32) {
-        if !self.visible {
-            return;
-        }
+    fn update(&mut self) {
+        // Check all pending command results without blocking
+        let mut completed = Vec::new();
 
-        // Handle cursor blinking
-        self.cursor_blink_timer += dt;
-        if self.cursor_blink_timer > 0.5 {
-            self.cursor_blink_timer = 0.0;
-            self.cursor_visible = !self.cursor_visible;
-        }
-    }
-
-    fn handle_keyboard_input(&mut self) {
-        if !self.visible {
-            return;
-        }
-        // Handle paste operations (Ctrl+V or Shift+Insert)
-        let paste_requested = (is_key_down(KeyCode::LeftControl) && is_key_pressed(KeyCode::V))
-            || (is_key_down(KeyCode::LeftShift) && is_key_pressed(KeyCode::Insert))
-            || (is_key_down(KeyCode::RightShift) && is_key_pressed(KeyCode::Insert));
-
-        if paste_requested {
-            if let Some(ref mut ctx) = self.clipboard {
-                if let Ok(clipboard_text) = ctx.get_text() {
-                    // Insert clipboard text at cursor position
-                    let before = &self.current_input[..self.cursor_position];
-                    let after = &self.current_input[self.cursor_position..];
-                    self.current_input = format!("{}{}{}", before, clipboard_text, after);
-                    self.cursor_position += clipboard_text.len();
+        for (i, receiver) in self.pending_commands.iter().enumerate() {
+            match receiver.try_recv() {
+                Ok(result) => {
+                    // Process the result
+                    match result {
+                        Ok(output) => self.history.push(output),
+                        Err(err) => self.history.push(format!("Error: {}", err)),
+                    }
+                    // Mark this receiver as completed
+                    completed.push(i);
+                }
+                Err(mpsc::TryRecvError::Empty) => {
+                    // Not ready yet, continue with other tasks
+                    continue;
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    // Sender was dropped without sending
+                    self.history.push("Command processing failed".to_string());
+                    completed.push(i);
                 }
             }
         }
+        // Remove completed receivers (in reverse order to avoid index issues)
+        for i in completed.into_iter().rev() {
+            self.pending_commands.remove(i);
+        }
+        // Limit history size
+        while self.history.len() > 100 {
+            self.history.remove(0);
+        }
 
-        // Handle copy (Ctrl+C) or Ctrl+Insert
+        if !self.visible {
+            return;
+        }
+
+        // Handle clipboard operations
         let copy_requested = is_key_down(KeyCode::LeftControl) && is_key_pressed(KeyCode::C)
             || (is_key_down(KeyCode::LeftControl) && is_key_pressed(KeyCode::Insert));
         if copy_requested {
             if let Some(ref mut ctx) = self.clipboard {
-                let _ = ctx.set_text(self.current_input.clone());
+                let _ = ctx.set_text(self.editbox.clone());
                 self.history.push("Text copied to clipboard".to_string());
             }
         }
 
-        // Handle backspace - delete character before cursor
-        if is_key_pressed(KeyCode::Backspace) && self.cursor_position > 0 {
-            self.current_input.remove(self.cursor_position - 1);
-            self.cursor_position -= 1;
-        }
-
-        // Handle delete - delete character at cursor
-        if is_key_pressed(KeyCode::Delete) && self.cursor_position < self.current_input.len() {
-            self.current_input.remove(self.cursor_position);
-        }
-
-        // Handle arrow keys for cursor movement
-        if is_key_pressed(KeyCode::Left) && self.cursor_position > 0 {
-            self.cursor_position -= 1;
-        }
-        if is_key_pressed(KeyCode::Right) && self.cursor_position < self.current_input.len() {
-            self.cursor_position += 1;
-        }
-
-        // Handle Enter - add newline (regular Enter) or execute (Shift+Enter)
-        if is_key_pressed(KeyCode::Enter) {
-            let shift = is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift);
-
-            if shift {
-                // Execute command with Shift+Enter
-                if !self.current_input.is_empty() {
-                    self.execute_command();
+        let paste_requested = (is_key_down(KeyCode::LeftControl) && is_key_pressed(KeyCode::V))
+            || (is_key_down(KeyCode::LeftShift) && is_key_pressed(KeyCode::Insert))
+            || (is_key_down(KeyCode::RightShift) && is_key_pressed(KeyCode::Insert));
+        // Paste (Ctrl+V)
+        if paste_requested {
+            if let Some(ref mut ctx) = self.clipboard {
+                if let Ok(clipboard_text) = ctx.get_text() {
+                    self.editbox.push_str(&clipboard_text);
                 }
-            } else {
-                // Insert newline at cursor position
-                let before = &self.current_input[..self.cursor_position];
-                let after = &self.current_input[self.cursor_position..];
-                self.current_input = format!("{}\n{}", before, after);
-                self.cursor_position += 1;
             }
         }
 
-        // Handle space
-        if is_key_pressed(KeyCode::Space) {
-            self.insert_char(' ');
-        }
-
-        // Check shift state for capital letters
-        let shift = is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift);
-
-        // Handle letter keys
-        let alpha_keys = [
-            (KeyCode::A, 'a', 'A'),
-            (KeyCode::B, 'b', 'B'),
-            (KeyCode::C, 'c', 'C'),
-            (KeyCode::D, 'd', 'D'),
-            (KeyCode::E, 'e', 'E'),
-            (KeyCode::F, 'f', 'F'),
-            (KeyCode::G, 'g', 'G'),
-            (KeyCode::H, 'h', 'H'),
-            (KeyCode::I, 'i', 'I'),
-            (KeyCode::J, 'j', 'J'),
-            (KeyCode::K, 'k', 'K'),
-            (KeyCode::L, 'l', 'L'),
-            (KeyCode::M, 'm', 'M'),
-            (KeyCode::N, 'n', 'N'),
-            (KeyCode::O, 'o', 'O'),
-            (KeyCode::P, 'p', 'P'),
-            (KeyCode::Q, 'q', 'Q'),
-            (KeyCode::R, 'r', 'R'),
-            (KeyCode::S, 's', 'S'),
-            (KeyCode::T, 't', 'T'),
-            (KeyCode::U, 'u', 'U'),
-            (KeyCode::V, 'v', 'V'),
-            (KeyCode::W, 'w', 'W'),
-            (KeyCode::X, 'x', 'X'),
-            (KeyCode::Y, 'y', 'Y'),
-            (KeyCode::Z, 'z', 'Z'),
-        ];
-
-        for (key, lower, upper) in alpha_keys.iter() {
-            if is_key_pressed(*key) {
-                self.insert_char(if shift { *upper } else { *lower });
-            }
-        }
-
-        // Handle number keys
-        let num_keys = [
-            (KeyCode::Key0, '0', ')'),
-            (KeyCode::Key1, '1', '!'),
-            (KeyCode::Key2, '2', '@'),
-            (KeyCode::Key3, '3', '#'),
-            (KeyCode::Key4, '4', '$'),
-            (KeyCode::Key5, '5', '%'),
-            (KeyCode::Key6, '6', '^'),
-            (KeyCode::Key7, '7', '&'),
-            (KeyCode::Key8, '8', '*'),
-            (KeyCode::Key9, '9', '('),
-        ];
-
-        for (key, normal, shifted) in num_keys.iter() {
-            if is_key_pressed(*key) {
-                self.insert_char(if shift { *shifted } else { *normal });
-            }
-        }
-
-        // Handle punctuation keys
-        let punct_keys = [
-            (KeyCode::Minus, '-', '_'),
-            (KeyCode::Equal, '=', '+'),
-            (KeyCode::LeftBracket, '[', '{'),
-            (KeyCode::RightBracket, ']', '}'),
-            (KeyCode::Semicolon, ';', ':'),
-            (KeyCode::Apostrophe, '\'', '"'),
-            (KeyCode::Comma, ',', '<'),
-            (KeyCode::Period, '.', '>'),
-            (KeyCode::Slash, '/', '?'),
-            (KeyCode::Backslash, '\\', '|'),
-        ];
-
-        for (key, normal, shifted) in punct_keys.iter() {
-            if is_key_pressed(*key) {
-                self.insert_char(if shift { *shifted } else { *normal });
-            }
+        // Execute command on Shift+Enter
+        if is_key_pressed(KeyCode::Enter)
+            && (is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl))
+        {
+            self.execute_command();
         }
     }
 
-    fn insert_char(&mut self, c: char) {
-        // Insert character at cursor position
-        let before = &self.current_input[..self.cursor_position];
-        let after = &self.current_input[self.cursor_position..];
-        self.current_input = format!("{}{}{}", before, c, after);
-        self.cursor_position += 1;
-    }
-
-    fn draw(&self) {
+    fn draw(&mut self) {
         if !self.visible {
             return;
         }
 
         // Calculate console dimensions
         let console_height = screen_height() * 0.4;
+        let input_area_height = 180.0;
 
-        // Draw semi-transparent background (using existing color)
+        // Draw semi-transparent background
         draw_rectangle(
             0.0,
             0.0,
             screen_width(),
             console_height,
-            TEXT_BACKGROUND_COLOR,
+            Color::new(0.1, 0.1, 0.1, 0.7), // TEXT_BACKGROUND_COLOR
         );
 
         // Draw input area with slightly darker background
-        let input_area_height = 60.0; // More space for multiline
         draw_rectangle(
             0.0,
             console_height - input_area_height,
@@ -815,62 +697,43 @@ impl Console {
         draw_text(
             "> ",
             10.0,
-            console_height - input_area_height + 20.0,
+            console_height - input_area_height + 25.0,
             20.0,
             WHITE,
         );
 
-        // Split input by lines and draw with cursor
-        let lines = self.current_input.split('\n').collect::<Vec<_>>();
-        let mut current_pos = 0;
-
-        for (i, line) in lines.iter().enumerate() {
-            let y_offset = console_height - input_area_height + 20.0 + (i as f32 * 20.0);
-
-            // Draw line
-            if i == 0 {
-                // First line includes prompt offset
-                draw_text(line, 30.0, y_offset, 20.0, WHITE);
-            } else {
-                draw_text(line, 10.0, y_offset, 20.0, WHITE);
-            }
-
-            // Check if cursor is in this line
-            if current_pos <= self.cursor_position
-                && self.cursor_position <= current_pos + line.len()
-            {
-                if self.cursor_visible {
-                    // Draw cursor at correct position within this line
-                    let cursor_offset = self.cursor_position - current_pos;
-                    let prefix = &line[..cursor_offset.min(line.len())];
-                    let cursor_x = if i == 0 { 30.0 } else { 10.0 }
-                        + measure_text(prefix, None, 20 as u16, 1.0).width;
-
-                    draw_text("_", cursor_x, y_offset, 20.0, WHITE);
-                }
-            }
-
-            // Move counter past this line plus the newline character
-            current_pos += line.len() + 1;
-        }
-
         // Draw command history (most recent at the bottom)
         let line_height = 20.0;
         let visible_lines = ((console_height - input_area_height) / line_height) as usize;
-
         let start_idx = if self.history.len() > visible_lines {
             self.history.len() - visible_lines
         } else {
             0
         };
-
         for (i, line) in self.history[start_idx..].iter().enumerate() {
             let y = (i as f32) * line_height + 20.0;
             draw_text(line, 10.0, y, 20.0, WHITE);
         }
+
+        // Use Editbox for input (placed after background drawing)
+        let mut ui = root_ui();
+
+        // Position the editbox in the input area - using Vec2 for size
+        let editbox_width = screen_width() - 40.0;
+
+        // Create editbox with proper size (Vec2)
+        let size = Vec2::new(editbox_width, input_area_height);
+        let pos_x = 35.0; // After the prompt
+        let pos_y = console_height - input_area_height + 5.0;
+
+        widgets::Editbox::new(hash!(), size)
+            .position(Vec2::new(pos_x, pos_y))
+            .multiline(true)
+            .ui(&mut ui, &mut self.editbox);
+
+        ui.pop_skin();
     }
 }
-
 struct CameraController {
     position: Vec2,
     zoom: f32,
@@ -1263,12 +1126,13 @@ struct GameState {
     character_textures: Vec<Texture2D>,
     last_person_pos: Option<Vec2>,
     console: Console,
-    lua_engine: Arc<RwLock<LuaEngine>>,
+    lua_client: Arc<LuaClient>,
 }
 
 impl GameState {
-    async fn new() -> Self {
-        let lua_engine = Arc::new(RwLock::new(LuaEngine::new()));
+    async fn new(command_tx: Sender<LuaCommand>) -> Self {
+        // Create the client that the game state will use
+        let lua_client = Arc::new(LuaClient::new(command_tx.clone()));
         let map = TileMap::new().await;
         let camera = CameraController::new(map.get_initial_center());
 
@@ -1292,8 +1156,8 @@ impl GameState {
         let mut people = Vec::new();
 
         for _ in 0..PEOPLE_BENCHMARK_SIZE {
-            let tile_x = 1;
-            let tile_y = 1;
+            let tile_x = 1 + rand::gen_range(0, PEOPLE_BENCHMARK_DISPERSION);
+            let tile_y = 1 + rand::gen_range(0, PEOPLE_BENCHMARK_DISPERSION);
 
             if !character_textures.is_empty() {
                 // Select random texture
@@ -1324,8 +1188,8 @@ impl GameState {
             ui_state: UIState::TileCreation, // Default state
             character_textures,
             last_person_pos: None,
-            console: Console::new(lua_engine.clone()),
-            lua_engine,
+            console: Console::new(lua_client.clone()),
+            lua_client,
         }
     }
 
@@ -1333,19 +1197,15 @@ impl GameState {
         let current_time = get_time();
         let dt = (current_time - self.last_frame_time) as f32;
         self.last_frame_time = current_time;
-
-        // Toggle console with backtick key
         if is_key_pressed(KeyCode::GraveAccent) {
             self.console.toggle();
         }
-        self.console.update(dt);
-        if self.console.visible {
-            self.console.handle_keyboard_input();
 
-            // Skip other game updates when console is open
+        // Update and draw the console
+        if self.console.visible {
+            self.console.update();
             return;
         }
-
         // Existing update code
         for person in &mut self.people {
             person.update(dt);
@@ -1489,7 +1349,6 @@ impl GameState {
             self.selected_pos.as_ref(),
             &self.input,
         );
-
         // Draw console
         self.console.draw();
     }
@@ -1530,13 +1389,23 @@ fn visit_dirs(dir: &Path, paths: &mut Vec<PathBuf>) -> std::io::Result<()> {
     }
     Ok(())
 }
+
 #[macroquad::main("Tilemap Example")]
 async fn main() {
-    let mut game = GameState::new().await;
+    let (command_tx, command_rx) = mpsc::channel();
+    let lua_engine = Arc::new(Mutex::new(LuaEngine::new(command_rx)));
+    // Create game state with client
+    let mut game = GameState::new(command_tx).await;
+    let ui_state = LuaUIBindings::new(lua_engine.clone());
+    // spawn thread to run the lua engine
+    thread::spawn(move || {
+        lua_engine.lock().unwrap().run();
+    });
 
     loop {
         game.update();
         game.draw();
+        ui_state.draw();
         next_frame().await;
     }
 }

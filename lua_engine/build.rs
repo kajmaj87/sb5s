@@ -6,8 +6,8 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 
 fn main() {
-    // Path to core package source
-    let core_src = "../core/src/api";
+    // Path to logic package source
+    let core_src = "../logic/src/api";
 
     // Output file in lua_engine
     let out_dir = env::var("OUT_DIR").unwrap();
