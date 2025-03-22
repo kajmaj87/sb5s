@@ -42,7 +42,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ ubuntu-latest, windows-latest ]
-        binary: [ sb5s-pixel, sb5s-egui ]  # Fixed package names
+        binary: [ sb5s-pixel ]
 
     steps:
       - uses: actions/checkout@v3
