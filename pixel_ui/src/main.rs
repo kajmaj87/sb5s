@@ -621,9 +621,9 @@ enum UIState {
 }
 
 struct GameState {
-    map: TileMap,
-    camera: CameraController,
-    input: InputManager,
+    map: Arc<Mutex<TileMap>>,
+    camera: Arc<Mutex<CameraController>>,
+    input: Arc<Mutex<InputManager>>,
     ui: UI,
     debug: DebugWindow,
     selected_pos: Option<TilePosition>,
@@ -634,14 +634,23 @@ struct GameState {
     last_person_pos: Option<Vec2>,
     console: Console,
     lua_client: Arc<LuaClient>,
+    lua_ui: LuaUIBindings,
 }
 
 impl GameState {
-    async fn new(command_tx: Sender<LuaCommand>) -> Self {
+    async fn new(command_tx: Sender<LuaCommand>, lua_engine: Arc<Mutex<LuaEngine>>) -> Self {
         // Create the client that the game state will use
         let lua_client = Arc::new(LuaClient::new(command_tx.clone()));
-        let map = TileMap::new().await;
-        let camera = CameraController::new(map.get_initial_center());
+        let map = Arc::new(Mutex::new(TileMap::new().await));
+        let initial_center = { map.lock().unwrap().get_initial_center() };
+        let camera = Arc::new(Mutex::new(CameraController::new(initial_center)));
+        let input = Arc::new(Mutex::new(InputManager::new()));
+        let lua_ui = LuaUIBindings::new(
+            lua_engine.clone(),
+            camera.clone(),
+            input.clone(),
+            map.clone(),
+        );
 
         // Load character textures
         let character_paths = find_character_textures("assets");
@@ -685,8 +694,8 @@ impl GameState {
 
         Self {
             map,
-            camera,
-            input: InputManager::new(),
+            camera: camera.clone(),
+            input: input.clone(),
             ui: UI::new(),
             debug: DebugWindow::new(),
             selected_pos: None,
@@ -697,6 +706,7 @@ impl GameState {
             last_person_pos: None,
             console: Console::new(lua_client.clone()),
             lua_client,
+            lua_ui,
         }
     }
 
@@ -713,12 +723,25 @@ impl GameState {
             self.console.update();
             return;
         }
-        // Existing update code
+
+        // Update people
         for person in &mut self.people {
             person.update(dt);
         }
-        self.input.update();
-        self.camera.update(&self.input);
+
+        // Update input
+        {
+            let mut input = self.input.lock().unwrap();
+            input.update();
+        }
+
+        // Update camera with input
+        {
+            let mut camera = self.camera.lock().unwrap();
+            let input = self.input.lock().unwrap();
+            camera.update(&input);
+        }
+
         self.debug.update();
 
         // Toggle debug mode
@@ -731,12 +754,30 @@ impl GameState {
         }
 
         // Convert mouse position to world coordinates
-        let mouse_world_pos = self.camera.screen_to_world(self.input.get_mouse_position());
-        let hover_pos = TilePosition::from_world_pos(mouse_world_pos);
+        let mouse_world_pos;
+        let hover_pos;
+        {
+            let camera = self.camera.lock().unwrap();
+            let input = self.input.lock().unwrap();
+            mouse_world_pos = camera.screen_to_world(input.get_mouse_position());
+        }
+        hover_pos = TilePosition::from_world_pos(mouse_world_pos);
 
         // Handle tile selection
-        if self.input.should_select_tile() {
-            if self.map.get_tile(&hover_pos).is_some() {
+        let should_select;
+        {
+            let input = self.input.lock().unwrap();
+            should_select = input.should_select_tile();
+        }
+
+        if should_select {
+            // Check if tile exists with lock
+            let tile_exists = {
+                let map = self.map.lock().unwrap();
+                map.get_tile(&hover_pos).is_some()
+            };
+
+            if tile_exists {
                 self.selected_pos = Some(hover_pos);
                 self.ui_state = UIState::TileCreation;
             }
@@ -745,13 +786,28 @@ impl GameState {
         // Handle actions based on UI state
         match self.ui_state {
             UIState::TileCreation => {
+                // Check conditions for tile placement
+                let should_place_tile;
+                let can_place;
+                {
+                    let mut input = self.input.lock().unwrap();
+                    should_place_tile = input.should_place_tile(self.selected_pos.as_ref());
+                    can_place = input.can_place_at(hover_pos);
+                }
+
                 // Handle tile placement
-                if self.input.should_place_tile(self.selected_pos.as_ref()) {
-                    if self.input.can_place_at(hover_pos) {
-                        if let Some(selected_pos) = &self.selected_pos {
-                            if let Some(selected_tile) = self.map.get_tile(selected_pos) {
-                                self.map.place_tile(&hover_pos, selected_tile.id);
-                            }
+                if should_place_tile && can_place {
+                    if let Some(selected_pos) = &self.selected_pos {
+                        // Get the tile ID from the selected position
+                        let selected_tile_id = {
+                            let map = self.map.lock().unwrap();
+                            map.get_tile(selected_pos).map(|tile| tile.id)
+                        };
+
+                        // Place the tile if we found a valid ID
+                        if let Some(tile_id) = selected_tile_id {
+                            let mut map = self.map.lock().unwrap();
+                            map.place_tile(&hover_pos, tile_id);
                         }
                     }
                 }
@@ -781,6 +837,7 @@ impl GameState {
             }
         }
     }
+
     fn add_person_at_position(&mut self, tile_pos: TilePosition, world_pos: Vec2) {
         if !self.character_textures.is_empty() {
             let texture_index = rand::gen_range(0, self.character_textures.len());
@@ -802,29 +859,46 @@ impl GameState {
             self.people.push(person);
         }
     }
+
     fn draw(&mut self) {
         clear_background(BLACK);
 
         // Draw world
-        self.camera.apply();
-        self.map.draw(&self.camera, self.selected_pos.as_ref());
-        for person in &self.people {
-            person.draw(); // Using the updated draw method without tiles_per_row
-        }
+        {
+            let mut camera = self.camera.lock().unwrap();
+            camera.apply();
 
-        // Highlight hovered tile if not dragging (only in debug mode)
-        if self.input.get_drag_delta().is_none() {
-            let hover_pos = TilePosition::from_world_pos(
-                self.camera.screen_to_world(self.input.get_mouse_position()),
-            );
-            self.debug.draw_tile_highlight(&hover_pos);
+            // Draw map with locked access
+            {
+                let mut map = self.map.lock().unwrap();
+                map.draw(&camera, self.selected_pos.as_ref());
+            }
+
+            for person in &self.people {
+                person.draw(); // Using the updated draw method without tiles_per_row
+            }
+
+            // Highlight hovered tile if not dragging (only in debug mode)
+            {
+                let input = self.input.lock().unwrap();
+                if input.get_drag_delta().is_none() {
+                    let mouse_pos = input.get_mouse_position();
+                    let hover_pos = TilePosition::from_world_pos(camera.screen_to_world(mouse_pos));
+                    self.debug.draw_tile_highlight(&hover_pos);
+                }
+            }
         }
 
         // Draw UI (always visible)
         set_default_camera();
         self.ui.draw_instructions();
-        self.ui
-            .draw_selected_tile_preview(self.selected_pos.as_ref(), &self.map);
+
+        // Draw tile preview with locked map
+        {
+            let map = self.map.lock().unwrap();
+            self.ui
+                .draw_selected_tile_preview(self.selected_pos.as_ref(), &map);
+        }
 
         // Display mode-specific message
         match self.ui_state {
@@ -850,12 +924,15 @@ impl GameState {
         }
 
         // Draw debug window if enabled
-        self.debug.draw(
-            &self.map,
-            &self.camera,
-            self.selected_pos.as_ref(),
-            &self.input,
-        );
+        {
+            let camera = self.camera.lock().unwrap();
+            let input = self.input.lock().unwrap();
+            let map = self.map.lock().unwrap();
+            self.debug
+                .draw(&map, &camera, self.selected_pos.as_ref(), &input);
+        }
+
+        self.lua_ui.draw();
         // Draw console
         self.console.draw();
     }
@@ -901,12 +978,11 @@ fn visit_dirs(dir: &Path, paths: &mut Vec<PathBuf>) -> std::io::Result<()> {
 async fn main() {
     let (command_tx, command_rx) = mpsc::channel();
     let lua_engine = Arc::new(Mutex::new(LuaEngine::new(command_rx)));
-    let ui_state = LuaUIBindings::new(lua_engine.clone());
+    let mut game = GameState::new(command_tx, lua_engine.clone()).await;
     if let Err(e) = lua_engine.lock().unwrap().run_script("require('init')") {
         println!("Error running lua script: {:?}", e);
     }
     // Create game state with client
-    let mut game = GameState::new(command_tx).await;
     // spawn thread to run the lua engine
     thread::spawn(move || {
         lua_engine.lock().unwrap().run();
@@ -915,7 +991,6 @@ async fn main() {
     loop {
         game.update();
         game.draw();
-        ui_state.draw();
         next_frame().await;
     }
 }
