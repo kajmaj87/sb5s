@@ -5,11 +5,9 @@ use macroquad::hash;
 use macroquad::prelude::*;
 use macroquad::ui::{root_ui, widgets};
 use std::collections::{HashMap, VecDeque};
-use std::os::unix::raw::uid_t;
 use std::path::{Path, PathBuf};
-use std::process::exit;
 use std::sync::mpsc::Sender;
-use std::sync::{mpsc, Arc, Mutex, RwLock};
+use std::sync::{mpsc, Arc, Mutex};
 use std::{fs, thread};
 
 // Constants
