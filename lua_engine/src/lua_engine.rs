@@ -64,6 +64,10 @@ impl LuaEngine {
         }
     }
 
+    pub fn run_script(&mut self, script: &str) -> mlua::Result<()> {
+        self.lua.load(script).exec()
+    }
+
     // Process a single command - call this in a loop from your thread
     pub fn process_command(&mut self) -> bool {
         match self.command_rx.recv() {

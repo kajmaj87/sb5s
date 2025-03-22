@@ -1,8 +1,11 @@
+mod camera;
 mod console;
+mod debug;
+mod input;
 mod lua_ui_integration;
 
 use macroquad::prelude::*;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::sync::{mpsc, Arc, Mutex};
@@ -91,7 +94,10 @@ mod utils {
     }
 }
 
+use crate::camera::CameraController;
 use crate::console::Console;
+use crate::debug::DebugWindow;
+use crate::input::InputManager;
 use crate::lua_ui_integration::LuaUIBindings;
 use crate::utils::*;
 use config::*;
@@ -543,204 +549,6 @@ impl Person {
     }
 }
 
-// New Console struct to manage the console state
-struct CameraController {
-    position: Vec2,
-    zoom: f32,
-}
-
-impl CameraController {
-    fn new(position: Vec2) -> Self {
-        Self {
-            position,
-            zoom: 1.0,
-        }
-    }
-
-    fn update(&mut self, input: &InputManager) {
-        // Handle keyboard movement
-        if input.is_direction_pressed() {
-            let move_speed = CAMERA_SPEED / self.zoom;
-            if input.is_up_pressed() {
-                self.position.y -= move_speed;
-            }
-            if input.is_down_pressed() {
-                self.position.y += move_speed;
-            }
-            if input.is_left_pressed() {
-                self.position.x -= move_speed;
-            }
-            if input.is_right_pressed() {
-                self.position.x += move_speed;
-            }
-        }
-
-        // Handle drag movement
-        if let Some(drag_delta) = input.get_drag_delta() {
-            self.position.x -= drag_delta.x / self.zoom;
-            self.position.y -= drag_delta.y / self.zoom;
-        }
-
-        // Handle zoom
-        if let Some(zoom_delta) = input.get_zoom_delta() {
-            // Store pre-zoom mouse world position
-            let pre_zoom_pos = self.screen_to_world(input.get_mouse_position());
-
-            // Apply zoom
-            if zoom_delta < 0.0 {
-                self.zoom /= ZOOM_SPEED;
-            } else {
-                self.zoom *= ZOOM_SPEED;
-            }
-            self.zoom = self.zoom.clamp(ZOOM_MIN, ZOOM_MAX);
-
-            // Get post-zoom mouse world position
-            let post_zoom_pos = self.screen_to_world(input.get_mouse_position());
-
-            // Adjust to keep world position under cursor
-            self.position.x += pre_zoom_pos.x - post_zoom_pos.x;
-            self.position.y += pre_zoom_pos.y - post_zoom_pos.y;
-        }
-    }
-
-    fn get_macroquad_camera(&self) -> Camera2D {
-        Camera2D {
-            target: self.position,
-            zoom: Vec2::new(
-                self.zoom * 2.0 / screen_width(),
-                self.zoom * 2.0 / screen_height(),
-            ),
-            ..Default::default()
-        }
-    }
-
-    fn screen_to_world(&self, screen_pos: Vec2) -> Vec2 {
-        self.get_macroquad_camera().screen_to_world(screen_pos)
-    }
-
-    fn apply(&self) {
-        set_camera(&self.get_macroquad_camera());
-    }
-}
-
-struct InputManager {
-    mouse_position: Vec2,
-    prev_mouse_position: Vec2,
-    is_dragging: bool,
-    drag_start_position: Vec2,
-    mouse_moved_during_click: bool,
-    zoom_delta: Option<f32>,
-    last_painted_pos: Option<TilePosition>,
-}
-
-impl InputManager {
-    fn new() -> Self {
-        let initial_pos = Vec2::new(mouse_position().0, mouse_position().1);
-        Self {
-            mouse_position: initial_pos,
-            prev_mouse_position: initial_pos,
-            is_dragging: false,
-            drag_start_position: initial_pos,
-            mouse_moved_during_click: false,
-            zoom_delta: None,
-            last_painted_pos: None,
-        }
-    }
-
-    fn update(&mut self) {
-        self.prev_mouse_position = self.mouse_position;
-        self.mouse_position = Vec2::new(mouse_position().0, mouse_position().1);
-        self.zoom_delta = if mouse_wheel().1 != 0.0 {
-            Some(mouse_wheel().1)
-        } else {
-            None
-        };
-
-        // Handle mouse button press/release
-        if is_mouse_button_pressed(MouseButton::Left) {
-            self.drag_start_position = self.mouse_position;
-            self.is_dragging = false;
-            self.mouse_moved_during_click = false;
-        }
-
-        // Check for drag while mouse is down
-        if is_mouse_button_down(MouseButton::Left) {
-            if !self.is_dragging {
-                let delta = self.mouse_position - self.drag_start_position;
-                let distance = delta.length();
-
-                if distance > DRAG_THRESHOLD {
-                    self.is_dragging = true;
-                    self.mouse_moved_during_click = true;
-                }
-            }
-        } else {
-            // If left button is not down, we're not dragging
-            self.is_dragging = false;
-        }
-    }
-
-    fn is_direction_pressed(&self) -> bool {
-        is_key_down(KeyCode::W)
-            || is_key_down(KeyCode::Up)
-            || is_key_down(KeyCode::S)
-            || is_key_down(KeyCode::Down)
-            || is_key_down(KeyCode::A)
-            || is_key_down(KeyCode::Left)
-            || is_key_down(KeyCode::D)
-            || is_key_down(KeyCode::Right)
-    }
-
-    fn is_up_pressed(&self) -> bool {
-        is_key_down(KeyCode::W) || is_key_down(KeyCode::Up)
-    }
-
-    fn is_down_pressed(&self) -> bool {
-        is_key_down(KeyCode::S) || is_key_down(KeyCode::Down)
-    }
-
-    fn is_left_pressed(&self) -> bool {
-        is_key_down(KeyCode::A) || is_key_down(KeyCode::Left)
-    }
-
-    fn is_right_pressed(&self) -> bool {
-        is_key_down(KeyCode::D) || is_key_down(KeyCode::Right)
-    }
-
-    fn should_select_tile(&self) -> bool {
-        is_mouse_button_released(MouseButton::Left) && !self.mouse_moved_during_click
-    }
-
-    fn should_place_tile(&self, selected_pos: Option<&TilePosition>) -> bool {
-        is_mouse_button_down(MouseButton::Right) && selected_pos.is_some()
-    }
-
-    fn get_drag_delta(&self) -> Option<Vec2> {
-        if self.is_dragging {
-            Some(self.mouse_position - self.prev_mouse_position)
-        } else {
-            None
-        }
-    }
-
-    fn get_zoom_delta(&self) -> Option<f32> {
-        self.zoom_delta
-    }
-
-    fn get_mouse_position(&self) -> Vec2 {
-        self.mouse_position
-    }
-
-    fn can_place_at(&mut self, pos: TilePosition) -> bool {
-        if self.last_painted_pos != Some(pos) {
-            self.last_painted_pos = Some(pos);
-            true
-        } else {
-            false
-        }
-    }
-}
-
 struct UI {}
 
 impl UI {
@@ -805,117 +613,6 @@ impl UI {
     }
 }
 
-struct DebugWindow {
-    enabled: bool,
-    fps_history: VecDeque<i32>,
-}
-
-impl DebugWindow {
-    fn new() -> Self {
-        Self {
-            enabled: true, // On by default
-            fps_history: VecDeque::with_capacity(FPS_HISTORY_SIZE),
-        }
-    }
-
-    fn update(&mut self) {
-        let current_fps = get_fps();
-        self.fps_history.push_back(current_fps);
-        if self.fps_history.len() > FPS_HISTORY_SIZE {
-            self.fps_history.pop_front();
-        }
-    }
-
-    fn toggle(&mut self) {
-        self.enabled = !self.enabled;
-    }
-
-    fn draw(
-        &self,
-        map: &TileMap,
-        camera: &CameraController,
-        selected_pos: Option<&TilePosition>,
-        input: &InputManager,
-    ) {
-        if !self.enabled {
-            return;
-        }
-
-        let mut debug_texts = Vec::new();
-
-        // Add hover info if not dragging
-        if input.get_drag_delta().is_none() {
-            let hover_pos =
-                TilePosition::from_world_pos(camera.screen_to_world(input.get_mouse_position()));
-
-            if let Some(tile) = map.get_tile(&hover_pos) {
-                debug_texts.push((
-                    format!("Hover: ({}, {}) ID: {}", hover_pos.x, hover_pos.y, tile.id),
-                    WHITE,
-                ));
-            } else {
-                debug_texts.push((
-                    format!("Hover: ({}, {}) [Empty]", hover_pos.x, hover_pos.y),
-                    WHITE,
-                ));
-            }
-        }
-
-        // Add selected tile info
-        if let Some(pos) = selected_pos {
-            if let Some(tile) = map.get_tile(pos) {
-                debug_texts.push((
-                    format!("Selected: ({}, {}) ID: {}", pos.x, pos.y, tile.id),
-                    RED,
-                ));
-            }
-        }
-
-        // Add statistics
-        debug_texts.push((
-            format!(
-                "Visible tiles: {}/{} ({:.1}%)",
-                map.visible_tiles_count,
-                map.tiles.len(),
-                100.0 * map.visible_tiles_count as f32 / map.tiles.len() as f32
-            ),
-            BLUE,
-        ));
-
-        debug_texts.push((format!("Zoom: {:.3}", camera.zoom), SKYBLUE));
-
-        let bounds = map.bounds.as_tuple();
-        debug_texts.push((
-            format!(
-                "Map bounds: ({}, {}) to ({}, {})",
-                bounds.0, bounds.1, bounds.2, bounds.3
-            ),
-            GREEN,
-        ));
-
-        let avg_fps: f32 =
-            self.fps_history.iter().sum::<i32>() as f32 / self.fps_history.len().max(1) as f32;
-        debug_texts.push((format!("FPS: {} (Avg: {:.1})", get_fps(), avg_fps), GREEN));
-        debug_texts.push((
-            "Shift+D to toggle debug mode window, ` (accent) to open console"
-                .parse()
-                .unwrap(),
-            WHITE,
-        ));
-
-        // Draw all debug texts with a single background
-        draw_text_list(debug_texts, 20.0, 30.0);
-    }
-
-    fn draw_tile_highlight(&self, pos: &TilePosition) {
-        if !self.enabled {
-            return;
-        }
-
-        let world_pos = pos.to_world_pos();
-        draw_rectangle_lines(world_pos.x, world_pos.y, TILE_SIZE, TILE_SIZE, 2.0, YELLOW);
-    }
-}
 // Define a UI state enum to track the current mode
 #[derive(PartialEq)]
 enum UIState {
@@ -1204,9 +901,12 @@ fn visit_dirs(dir: &Path, paths: &mut Vec<PathBuf>) -> std::io::Result<()> {
 async fn main() {
     let (command_tx, command_rx) = mpsc::channel();
     let lua_engine = Arc::new(Mutex::new(LuaEngine::new(command_rx)));
+    let ui_state = LuaUIBindings::new(lua_engine.clone());
+    if let Err(e) = lua_engine.lock().unwrap().run_script("require('init')") {
+        println!("Error running lua script: {:?}", e);
+    }
     // Create game state with client
     let mut game = GameState::new(command_tx).await;
-    let ui_state = LuaUIBindings::new(lua_engine.clone());
     // spawn thread to run the lua engine
     thread::spawn(move || {
         lua_engine.lock().unwrap().run();
