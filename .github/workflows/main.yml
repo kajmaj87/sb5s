@@ -2,9 +2,9 @@ name: Build Binaries
 
 on:
   push:
-    branches: [ master ]
+    branches: [ develop ]
   pull_request:
-    branches: [ master ]
+    branches: [ develop ]
   workflow_dispatch:  # Allow manual triggering
 jobs:
   check:
@@ -97,7 +97,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.binary }}-${{ matrix.os }}
+          name: ${{ matrix.binary }}-${{ matrix.os == 'ubuntu-latest' && 'linux' || matrix.os }}
           path: artifacts/
 
   notify:
