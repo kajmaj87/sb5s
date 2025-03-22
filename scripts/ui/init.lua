@@ -19,3 +19,7 @@ local help_old = help;
 help = function(a)
     print(help_old(a))
 end
+
+label(function()
+    return "Hello World"
+end)

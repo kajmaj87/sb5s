@@ -1,14 +1,15 @@
-mod lua_integration;
-mod ui;
+mod lua_ui_integration;
 
 use arboard::Clipboard;
 use macroquad::hash;
 use macroquad::prelude::*;
 use macroquad::ui::{root_ui, widgets};
 use std::collections::{HashMap, VecDeque};
+use std::os::unix::raw::uid_t;
 use std::path::{Path, PathBuf};
+use std::process::exit;
 use std::sync::mpsc::Sender;
-use std::sync::{mpsc, Arc, RwLock};
+use std::sync::{mpsc, Arc, Mutex, RwLock};
 use std::{fs, thread};
 
 // Constants
@@ -23,7 +24,7 @@ mod config {
     pub const DRAG_THRESHOLD: f32 = 5.0;
     pub const SELECTED_TILE_ZOOM: f32 = 8.0;
     pub const FPS_HISTORY_SIZE: usize = 60;
-    pub const BENCHMARK_MAP_SIZE: usize = 0;
+    pub const BENCHMARK_MAP_SIZE: usize = 1;
     pub const CAMERA_SPEED: f32 = 5.0;
     pub const TILE_BUFFER: i32 = 2;
     pub const TEXT_BACKGROUND_COLOR: Color = Color::new(0.0, 0.0, 0.0, 0.7);
@@ -31,8 +32,8 @@ mod config {
     pub const TEXT_PADDING: f32 = 15.0;
     pub const PERSON_SOURCE_TILE_SIZE: f32 = 32.0;
     pub const PERSON_TILE_SIZE: f32 = 32.0;
-    pub const PEOPLE_BENCHMARK_SIZE: usize = 1000;
-    pub const PEOPLE_BENCHMARK_DISPERSION: i32 = 10;
+    pub const PEOPLE_BENCHMARK_SIZE: usize = 100;
+    pub const PEOPLE_BENCHMARK_DISPERSION: i32 = 1;
 }
 
 mod utils {
@@ -94,6 +95,7 @@ mod utils {
     }
 }
 
+use crate::lua_ui_integration::LuaUIBindings;
 use crate::utils::*;
 use config::*;
 use lua_engine::lua_client::LuaClient;
@@ -1347,7 +1349,6 @@ impl GameState {
             self.selected_pos.as_ref(),
             &self.input,
         );
-
         // Draw console
         self.console.draw();
     }
@@ -1392,18 +1393,19 @@ fn visit_dirs(dir: &Path, paths: &mut Vec<PathBuf>) -> std::io::Result<()> {
 #[macroquad::main("Tilemap Example")]
 async fn main() {
     let (command_tx, command_rx) = mpsc::channel();
+    let lua_engine = Arc::new(Mutex::new(LuaEngine::new(command_rx)));
     // Create game state with client
     let mut game = GameState::new(command_tx).await;
-
+    let ui_state = LuaUIBindings::new(lua_engine.clone());
     // spawn thread to run the lua engine
     thread::spawn(move || {
-        let mut lua_engine = LuaEngine::new(command_rx);
-        lua_engine.run();
+        lua_engine.lock().unwrap().run();
     });
 
     loop {
         game.update();
         game.draw();
+        ui_state.draw();
         next_frame().await;
     }
 }

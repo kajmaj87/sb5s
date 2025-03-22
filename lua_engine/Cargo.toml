@@ -6,7 +6,6 @@ build = "build.rs"
 
 [dependencies]
 logic = { path = "../logic" }
-mlua = { version = "0.10.3", features = ["luau"] }
-tokio = "1.44.1"
+mlua = { version = "0.10.3", features = ["luau", "serialize", "send", "error-send"] }
 [build-dependencies]
 regex = "1.11.1"

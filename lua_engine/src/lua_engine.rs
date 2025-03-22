@@ -5,23 +5,10 @@ use std::collections::HashMap;
 use std::sync::{mpsc, Arc, RwLock};
 
 // Commands that can be sent to the Lua worker
-#[derive(Debug)]
 pub enum LuaCommand {
-    RunScript {
-        script: String,
-        response_tx: mpsc::Sender<Result<(), String>>,
-    },
     Execute {
         code: String,
         response_tx: mpsc::Sender<Result<String, String>>,
-    },
-    RegisterCallback {
-        script: String,
-        response_tx: mpsc::Sender<u32>,
-    },
-    ExecuteCallback {
-        id: u32,
-        response_tx: mpsc::Sender<Result<(), String>>,
     },
     Shutdown,
 }
@@ -32,7 +19,7 @@ pub enum LuaResponse {
 }
 
 pub struct LuaEngine {
-    lua: Lua,
+    pub lua: Lua,
     callbacks: HashMap<u32, Function>,
     next_callback_id: u32,
     command_rx: mpsc::Receiver<LuaCommand>,
@@ -82,16 +69,6 @@ impl LuaEngine {
         match self.command_rx.recv() {
             Ok(cmd) => {
                 match cmd {
-                    LuaCommand::RunScript {
-                        script,
-                        response_tx,
-                    } => {
-                        let result = match self.lua.load(&script).exec() {
-                            Ok(()) => Ok(()),
-                            Err(e) => Err(e.to_string()), // Convert LuaError to String
-                        };
-                        let _ = response_tx.send(result);
-                    }
                     LuaCommand::Execute { code, response_tx } => {
                         let result = match self.lua.load(&code).eval::<Value>() {
                             Ok(value) => {
@@ -109,33 +86,6 @@ impl LuaEngine {
                                 Ok(result)
                             }
                             Err(e) => Err(e.to_string()),
-                        };
-                        let _ = response_tx.send(result);
-                    }
-                    // LuaCommand::RegisterCallback { script, name, response_tx } => {
-                    //     // Load the function from string
-                    //     let func = match self.load(&script).eval::<Function>() {
-                    //         Ok(f) => f,
-                    //         Err(e) => {
-                    //             let _ = response_tx.send(0); // Error code
-                    //         }
-                    //     };
-                    //
-                    //     // Store in a HashMap with ID
-                    //     let id = next_callback_id;
-                    //     next_callback_id += 1;
-                    //     callbacks.insert(id, (name, func));
-                    //
-                    //     let _ = response_tx.send(id);
-                    // }
-                    LuaCommand::ExecuteCallback { id, response_tx } => {
-                        let result = if let Some(callback) = self.callbacks.get(&id) {
-                            match callback.call(()) {
-                                Ok(()) => Ok(()),
-                                Err(e) => Err(e.to_string()), // Convert LuaError to String
-                            }
-                        } else {
-                            Err(format!("Callback with id {} not found", id))
                         };
                         let _ = response_tx.send(result);
                     }
