@@ -85,6 +85,7 @@ jobs:
           mkdir -p artifacts
           cp target/release/${{ matrix.binary }} artifacts/
           cp -r assets artifacts/
+          cp -r scripts artifacts/
 
       - name: Prepare artifacts (Windows)
         if: matrix.os == 'windows-latest'
@@ -92,6 +93,7 @@ jobs:
           mkdir -p artifacts
           cp target/release/${{ matrix.binary }}.exe artifacts/
           cp -r assets artifacts/
+          cp -r scripts artifacts/
 
       # Upload artifacts - using v2 instead of v3
       - name: Upload artifacts
