@@ -718,12 +718,6 @@ impl GameState {
             self.console.toggle();
         }
 
-        // Update and draw the console
-        if self.console.visible {
-            self.console.update();
-            return;
-        }
-
         // Update people
         for person in &mut self.people {
             person.update(dt);
@@ -735,6 +729,11 @@ impl GameState {
             input.update();
         }
 
+        // Update and draw the console
+        if self.console.visible {
+            self.console.update();
+            return;
+        }
         // Update camera with input
         {
             let mut camera = self.camera.lock().unwrap();
@@ -865,7 +864,7 @@ impl GameState {
 
         // Draw world
         {
-            let mut camera = self.camera.lock().unwrap();
+            let camera = self.camera.lock().unwrap();
             camera.apply();
 
             // Draw map with locked access
