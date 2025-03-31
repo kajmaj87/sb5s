@@ -23,4 +23,8 @@ impl LuaClient {
         // Return the receiver immediately without waiting
         response_rx
     }
+
+    pub fn hot_reload(&self) {
+        self.command_tx.send(LuaCommand::HotReload).unwrap();
+    }
 }
