@@ -23,8 +23,7 @@ mod config {
     pub const DRAG_THRESHOLD: f32 = 5.0;
     pub const SELECTED_TILE_ZOOM: f32 = 8.0;
     pub const FPS_HISTORY_SIZE: usize = 60;
-    pub const BENCHMARK_MAP_SIZE: usize = 1;
-    pub const CAMERA_SPEED: f32 = 5.0;
+    pub const CAMERA_SPEED: f32 = 20.0;
     pub const TILE_BUFFER: i32 = 2;
     pub const TEXT_BACKGROUND_COLOR: Color = Color::new(0.0, 0.0, 0.0, 0.7);
     pub const TEXT_FONT_SIZE: f32 = 20.0;
@@ -32,6 +31,7 @@ mod config {
     pub const PERSON_SOURCE_TILE_SIZE: f32 = 32.0;
     pub const PERSON_TILE_SIZE: f32 = 32.0;
     pub const PEOPLE_BENCHMARK_SIZE: usize = 100;
+    pub const BENCHMARK_MAP_SIZE: usize = 1;
     pub const PEOPLE_BENCHMARK_DISPERSION: i32 = 1;
 }
 

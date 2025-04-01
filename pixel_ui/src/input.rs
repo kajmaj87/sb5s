@@ -1,5 +1,6 @@
 use crate::config::DRAG_THRESHOLD;
 use crate::TilePosition;
+use std::collections::HashMap;
 
 use macroquad::prelude::*;
 
@@ -11,8 +12,8 @@ pub struct InputManager {
     mouse_moved_during_click: bool,
     zoom_delta: Option<f32>,
     last_painted_pos: Option<TilePosition>,
+    keymap: HashMap<&'static str, KeyCode>,
 }
-
 impl InputManager {
     pub(crate) fn new() -> Self {
         let initial_pos = Vec2::new(mouse_position().0, mouse_position().1);
@@ -24,6 +25,7 @@ impl InputManager {
             mouse_moved_during_click: false,
             zoom_delta: None,
             last_painted_pos: None,
+            keymap: get_keycode_map(),
         }
     }
 

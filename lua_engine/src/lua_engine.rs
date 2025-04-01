@@ -75,8 +75,16 @@ impl LuaEngine {
         self.lua.load(script).exec()
     }
 
+    pub fn hot_reload(&mut self) {
+        let reloaded = self.hot_reload.check_for_changes();
+        for path in reloaded {
+            println!("Reloading script: {:?}", path);
+        }
+    }
+
     // Process a single command - call this in a loop from your thread
     pub fn process_command(&mut self) -> bool {
+        self.hot_reload();
         match self.command_rx.recv() {
             Ok(cmd) => {
                 match cmd {

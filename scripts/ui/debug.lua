@@ -35,5 +35,5 @@ function debug_window.draw()
 		end
 	end)
 end
-
+debug_window:draw()
 return debug_window
