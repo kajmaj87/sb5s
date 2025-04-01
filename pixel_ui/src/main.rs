@@ -771,7 +771,7 @@ impl GameState {
         let should_select;
         {
             let input = self.input.lock().unwrap();
-            should_select = input.should_select_tile();
+            should_select = input.is_left_mouse_click();
         }
 
         if should_select {

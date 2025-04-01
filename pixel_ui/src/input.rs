@@ -84,7 +84,7 @@ impl InputManager {
         is_key_down(KeyCode::D) || is_key_down(KeyCode::Right)
     }
 
-    pub(crate) fn should_select_tile(&self) -> bool {
+    pub(crate) fn is_left_mouse_click(&self) -> bool {
         is_mouse_button_released(MouseButton::Left) && !self.mouse_moved_during_click
     }
 
