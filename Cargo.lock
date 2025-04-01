@@ -1265,6 +1265,7 @@ dependencies = [
  "logic",
  "mlua",
  "regex",
+ "walkdir",
 ]
 
 [[package]]

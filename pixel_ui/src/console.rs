@@ -3,19 +3,19 @@ use lua_engine::lua_client::LuaClient;
 use macroquad::hash;
 use macroquad::prelude::*;
 use macroquad::ui::{root_ui, widgets};
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, Mutex};
 
 pub struct Console {
     pub(crate) visible: bool,
     history: Vec<String>,
     editbox: String,
     clipboard: Option<Clipboard>,
-    lua_client: Arc<LuaClient>,
+    lua_client: Arc<Mutex<LuaClient>>,
     pending_commands: Vec<mpsc::Receiver<Result<String, String>>>,
 }
 
 impl Console {
-    pub(crate) fn new(lua_client: Arc<LuaClient>) -> Self {
+    pub(crate) fn new(lua_client: Arc<Mutex<LuaClient>>) -> Self {
         // Initialize clipboard
         let clipboard = match Clipboard::new() {
             Ok(clipboard) => Some(clipboard),
@@ -47,7 +47,11 @@ impl Console {
         self.history.push(format!("> {}", command));
 
         // Execute the script with LuaEngine
-        let pending_result = self.lua_client.execute_non_blocking(command.as_str());
+        let pending_result = self
+            .lua_client
+            .lock()
+            .unwrap()
+            .execute_non_blocking(command.as_str());
         self.pending_commands.push(pending_result);
     }
 

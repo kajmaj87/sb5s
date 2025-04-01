@@ -1,8 +1,10 @@
 use crate::docs;
+use crate::hot_reload::SimpleHotReloader;
 use logic::CoreApi;
 use mlua::{Function, Lua, Result as LuaResult, Table, Value};
 use std::collections::HashMap;
-use std::sync::{mpsc, Arc, RwLock};
+use std::path::Path;
+use std::sync::{mpsc, Arc, Mutex, RwLock};
 
 // Commands that can be sent to the Lua worker
 pub enum LuaCommand {
@@ -10,6 +12,7 @@ pub enum LuaCommand {
         code: String,
         response_tx: mpsc::Sender<Result<String, String>>,
     },
+    HotReload,
     Shutdown,
 }
 
@@ -23,6 +26,7 @@ pub struct LuaEngine {
     callbacks: HashMap<u32, Function>,
     next_callback_id: u32,
     command_rx: mpsc::Receiver<LuaCommand>,
+    hot_reload: SimpleHotReloader,
 }
 
 impl LuaEngine {
@@ -30,6 +34,8 @@ impl LuaEngine {
     pub fn new(command_rx: mpsc::Receiver<LuaCommand>) -> Self {
         let lua = Lua::new();
         let globals = lua.globals();
+        let hot_reload =
+            SimpleHotReloader::new(Arc::new(Mutex::new(lua.clone())), Path::new("scripts"));
 
         // Initialize core API
         let core = Arc::new(RwLock::new(CoreApi::new()));
@@ -61,6 +67,7 @@ impl LuaEngine {
             callbacks: HashMap::new(),
             next_callback_id: 1,
             command_rx,
+            hot_reload,
         }
     }
 
@@ -68,8 +75,16 @@ impl LuaEngine {
         self.lua.load(script).exec()
     }
 
+    pub fn hot_reload(&mut self) {
+        let reloaded = self.hot_reload.check_for_changes();
+        for path in reloaded {
+            println!("Reloading script: {:?}", path);
+        }
+    }
+
     // Process a single command - call this in a loop from your thread
     pub fn process_command(&mut self) -> bool {
+        self.hot_reload();
         match self.command_rx.recv() {
             Ok(cmd) => {
                 match cmd {
@@ -94,7 +109,9 @@ impl LuaEngine {
                         let _ = response_tx.send(result);
                     }
                     LuaCommand::Shutdown => return false,
-                    _ => {}
+                    LuaCommand::HotReload => {
+                        self.hot_reload();
+                    }
                 }
                 true
             }

@@ -23,8 +23,7 @@ mod config {
     pub const DRAG_THRESHOLD: f32 = 5.0;
     pub const SELECTED_TILE_ZOOM: f32 = 8.0;
     pub const FPS_HISTORY_SIZE: usize = 60;
-    pub const BENCHMARK_MAP_SIZE: usize = 1;
-    pub const CAMERA_SPEED: f32 = 5.0;
+    pub const CAMERA_SPEED: f32 = 20.0;
     pub const TILE_BUFFER: i32 = 2;
     pub const TEXT_BACKGROUND_COLOR: Color = Color::new(0.0, 0.0, 0.0, 0.7);
     pub const TEXT_FONT_SIZE: f32 = 20.0;
@@ -32,6 +31,7 @@ mod config {
     pub const PERSON_SOURCE_TILE_SIZE: f32 = 32.0;
     pub const PERSON_TILE_SIZE: f32 = 32.0;
     pub const PEOPLE_BENCHMARK_SIZE: usize = 100;
+    pub const BENCHMARK_MAP_SIZE: usize = 1;
     pub const PEOPLE_BENCHMARK_DISPERSION: i32 = 1;
 }
 
@@ -633,14 +633,14 @@ struct GameState {
     character_textures: Vec<Texture2D>,
     last_person_pos: Option<Vec2>,
     console: Console,
-    lua_client: Arc<LuaClient>,
     lua_ui: LuaUIBindings,
+    lua_client: Arc<Mutex<LuaClient>>,
 }
 
 impl GameState {
     async fn new(command_tx: Sender<LuaCommand>, lua_engine: Arc<Mutex<LuaEngine>>) -> Self {
         // Create the client that the game state will use
-        let lua_client = Arc::new(LuaClient::new(command_tx.clone()));
+        let lua_client = Arc::new(Mutex::new(LuaClient::new(command_tx.clone())));
         let map = Arc::new(Mutex::new(TileMap::new().await));
         let initial_center = { map.lock().unwrap().get_initial_center() };
         let camera = Arc::new(Mutex::new(CameraController::new(initial_center)));
@@ -705,9 +705,14 @@ impl GameState {
             character_textures,
             last_person_pos: None,
             console: Console::new(lua_client.clone()),
-            lua_client,
             lua_ui,
+            lua_client,
         }
+    }
+
+    fn hot_reload(&self) {
+        let mut lua_client = self.lua_client.lock().unwrap();
+        lua_client.hot_reload();
     }
 
     fn update(&mut self) {
@@ -787,15 +792,13 @@ impl GameState {
             UIState::TileCreation => {
                 // Check conditions for tile placement
                 let should_place_tile;
-                let can_place;
                 {
-                    let mut input = self.input.lock().unwrap();
+                    let input = self.input.lock().unwrap();
                     should_place_tile = input.should_place_tile(self.selected_pos.as_ref());
-                    can_place = input.can_place_at(hover_pos);
                 }
 
                 // Handle tile placement
-                if should_place_tile && can_place {
+                if should_place_tile {
                     if let Some(selected_pos) = &self.selected_pos {
                         // Get the tile ID from the selected position
                         let selected_tile_id = {
@@ -973,7 +976,7 @@ fn visit_dirs(dir: &Path, paths: &mut Vec<PathBuf>) -> std::io::Result<()> {
     Ok(())
 }
 
-#[macroquad::main("Tilemap Example")]
+#[macroquad::main("Space Business 5 2nd Edition")]
 async fn main() {
     let (command_tx, command_rx) = mpsc::channel();
     let lua_engine = Arc::new(Mutex::new(LuaEngine::new(command_rx)));
@@ -994,6 +997,7 @@ async fn main() {
     loop {
         game.update();
         game.draw();
+        game.hot_reload();
         next_frame().await;
     }
 }
