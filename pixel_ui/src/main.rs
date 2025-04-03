@@ -97,7 +97,7 @@ mod utils {
 use crate::camera::CameraController;
 use crate::console::Console;
 use crate::debug::DebugWindow;
-use crate::input::InputManager;
+use crate::input::{InputEventProcessor, InputManager};
 use crate::lua_ui_integration::LuaUIBindings;
 use crate::utils::*;
 use config::*;
@@ -624,6 +624,7 @@ struct GameState {
     map: Arc<Mutex<TileMap>>,
     camera: Arc<Mutex<CameraController>>,
     input: Arc<Mutex<InputManager>>,
+    input_event_processor: Arc<Mutex<InputEventProcessor>>,
     ui: UI,
     debug: DebugWindow,
     selected_pos: Option<TilePosition>,
@@ -645,10 +646,12 @@ impl GameState {
         let initial_center = { map.lock().unwrap().get_initial_center() };
         let camera = Arc::new(Mutex::new(CameraController::new(initial_center)));
         let input = Arc::new(Mutex::new(InputManager::new()));
+        let input_event_processor = Arc::new(Mutex::new(InputEventProcessor::new()));
         let lua_ui = LuaUIBindings::new(
             lua_engine.clone(),
             camera.clone(),
             input.clone(),
+            input_event_processor.clone(),
             map.clone(),
         );
 
@@ -696,6 +699,7 @@ impl GameState {
             map,
             camera: camera.clone(),
             input: input.clone(),
+            input_event_processor: input_event_processor.clone(),
             ui: UI::new(),
             debug: DebugWindow::new(),
             selected_pos: None,
@@ -730,8 +734,12 @@ impl GameState {
 
         // Update input
         {
-            let mut input = self.input.lock().unwrap();
-            input.update();
+            self.input.lock().unwrap().update();
+            let events = self.input.lock().unwrap().get_events();
+            self.input_event_processor
+                .lock()
+                .unwrap()
+                .process_events(events);
         }
 
         // Update and draw the console
@@ -981,11 +989,7 @@ async fn main() {
     let (command_tx, command_rx) = mpsc::channel();
     let lua_engine = Arc::new(Mutex::new(LuaEngine::new(command_rx)));
     let mut game = GameState::new(command_tx, lua_engine.clone()).await;
-    if let Err(e) = lua_engine.lock().unwrap().run_script(
-        r#"-- Add scripts directory to Lua's package path
-        package.path = "./scripts/?.lua;" .. package.path
-        require('init')"#,
-    ) {
+    if let Err(e) = lua_engine.lock().unwrap().run_script("require('init')") {
         println!("Error during lua initialization: {:?}", e);
     }
     // Create game state with client

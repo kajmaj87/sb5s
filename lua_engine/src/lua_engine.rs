@@ -1,7 +1,6 @@
-use crate::docs;
 use crate::hot_reload::SimpleHotReloader;
 use logic::CoreApi;
-use mlua::{Function, Lua, Result as LuaResult, Table, Value};
+use mlua::{Function, Lua, Table, Value};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{mpsc, Arc, Mutex, RwLock};
@@ -33,6 +32,17 @@ impl LuaEngine {
     // Creates a new LuaEngine that receives commands from a channel
     pub fn new(command_rx: mpsc::Receiver<LuaCommand>) -> Self {
         let lua = Lua::new();
+        if let Err(e) = lua
+            .load(
+                r#"-- Add scripts directory to Lua's package path
+        package.path = "./scripts/?.lua;" .. package.path
+        require('bootstrap')"#,
+            )
+            .exec()
+        {
+            println!("Error during lua bootstrap: {:?}", e);
+        }
+        Self::init_help_system(&lua);
         let globals = lua.globals();
         let hot_reload =
             SimpleHotReloader::new(Arc::new(Mutex::new(lua.clone())), Path::new("scripts"));
@@ -59,9 +69,6 @@ impl LuaEngine {
         // Set API as global
         globals.set("api", api_table).unwrap();
 
-        // Setup documentation
-        Self::setup_documentation(&lua);
-
         Self {
             lua,
             callbacks: HashMap::new(),
@@ -76,10 +83,7 @@ impl LuaEngine {
     }
 
     pub fn hot_reload(&mut self) {
-        let reloaded = self.hot_reload.check_for_changes();
-        for path in reloaded {
-            println!("Reloading script: {:?}", path);
-        }
+        self.hot_reload.check_for_changes();
     }
 
     // Process a single command - call this in a loop from your thread
@@ -269,17 +273,11 @@ impl LuaEngine {
         // Expose api.location.most_crowded to Lua
         let core_clone = Arc::clone(&core);
         let most_crowded = lua
-            .create_function(move |lua_ctx, ()| {
+            .create_function(move |_, ()| {
                 if let Some((x, y, count)) = core_clone.read().unwrap().location().most_crowded() {
-                    // Convert to Lua table using the provided lua context
-                    let result_table = lua_ctx.create_table()?;
-                    result_table.set("x", x)?;
-                    result_table.set("y", y)?;
-                    result_table.set("count", count)?;
-
-                    Ok(Some(result_table))
+                    Ok((Some(x), Some(y), Some(count)))
                 } else {
-                    Ok(None)
+                    Ok((None, None, None))
                 }
             })
             .unwrap();
@@ -308,137 +306,56 @@ impl LuaEngine {
         table.set("count", event_count).unwrap();
     }
 
-    fn setup_documentation(lua: &Lua) {
-        // Create the docs table
-        let docs_table = lua.create_table().unwrap();
-        let globals = lua.globals();
-        globals.set("docs", docs_table.clone()).unwrap();
+    fn init_help_system(lua: &Lua) -> mlua::Result<()> {
+        let help_script = std::fs::read_to_string("scripts/help.lua")?;
+        lua.load(&help_script).exec()?;
 
-        // Get the API documentation from the generated code
-        let api_docs = docs::get_api_docs();
+        // Automatically find and load all .d.lua files from the scripts/api directory
+        let mut doc_files = std::collections::HashMap::new();
 
-        // Convert API docs to Lua tables
-        for (module_name, module_docs) in api_docs {
-            let module_table = lua.create_table().unwrap();
-            docs_table
-                .set(module_name.clone(), module_table.clone())
-                .unwrap();
-
-            for (method_name, method_doc) in module_docs.methods {
-                let method_table = lua.create_table().unwrap();
-                method_table
-                    .set("description", method_doc.description)
-                    .unwrap();
-
-                // Set parameters
-                let params_table = lua.create_table().unwrap();
-                for (i, param) in method_doc.params.iter().enumerate() {
-                    let param_table = lua.create_table().unwrap();
-                    param_table.set("name", param.name.clone()).unwrap();
-                    param_table.set("type", param.type_name.clone()).unwrap();
-                    param_table
-                        .set("description", param.description.clone())
-                        .unwrap();
-                    params_table.set(i + 1, &param_table).unwrap();
-                    params_table.set(param.name.clone(), param_table).unwrap();
+        match std::fs::read_dir("scripts/api") {
+            Ok(entries) => {
+                for entry in entries {
+                    if let Ok(entry) = entry {
+                        let path = entry.path();
+                        if path.is_file()
+                            && path.extension().map_or(false, |ext| ext == "lua")
+                            && path
+                                .file_name()
+                                .map_or(false, |name| name.to_string_lossy().contains(".d.lua"))
+                        {
+                            // Read the file content
+                            if let Ok(content) = std::fs::read_to_string(&path) {
+                                // Get filename without extension as the key
+                                if let Some(filename) = path.file_stem() {
+                                    let key = filename.to_string_lossy().to_string();
+                                    // Remove the ".d" suffix if present
+                                    let key = key.strip_suffix(".d").unwrap_or(&key).to_string();
+                                    doc_files.insert(key, content);
+                                }
+                            }
+                        }
+                    }
                 }
-
-                method_table.set("params", params_table).unwrap();
-                method_table.set("returns", method_doc.returns).unwrap();
-
-                module_table.set(method_name, method_table).unwrap();
+            }
+            Err(e) => {
+                println!("Warning: Could not read scripts/api directory: {}", e);
             }
         }
 
-        // Add help function
-        let help_fn = lua.create_function(|ctx, topic: Option<String>| {
-            let docs: Table = ctx.globals().get("docs")?;
+        if doc_files.is_empty() {
+            println!("Warning: No .d.lua files found in scripts/api directory");
+        }
 
-            match topic {
-                None => {
-                    // Level 1: List all modules
-                    let mut result = String::from("Available modules:\n");
+        doc_files.iter().for_each(|(key, content)| {
+            println!("Loaded help doc: {}", key);
+        });
 
-                    for pair in docs.pairs::<String, Table>() {
-                        let (module, _) = pair?;
-                        result.push_str(&format!("  {}\n", module));
-                    }
-
-                    result.push_str("\nUse help(\"module\") to see available methods.");
-                    Ok(result)
-                }
-                Some(topic) => {
-                    // Check if this is a module name or a method name
-                    let parts: Vec<&str> = topic.split('.').collect();
-
-                    if parts.len() == 1 {
-                        // Level 2: List all methods in a module
-                        let module = parts[0];
-                        let module_docs: LuaResult<Table> = docs.get(module);
-
-                        if let Ok(module_table) = module_docs {
-                            let mut result = format!("Methods in {} module:\n", module);
-
-                            for pair in module_table.pairs::<String, Table>() {
-                                let (method, _) = pair?;
-                                result.push_str(&format!("  {}.{}\n", module, method));
-                            }
-
-                            result.push_str("\nUse help(\"module.method\") to see method details.");
-                            Ok(result)
-                        } else {
-                            Ok(format!("Module '{}' not found. Use help() to see available modules.", module))
-                        }
-                    } else if parts.len() == 2 {
-                        // Level 3: Show details of a specific method
-                        let module = parts[0];
-                        let method = parts[1];
-
-                        // Get the module table
-                        let module_docs: LuaResult<Table> = docs.get(module);
-                        if let Ok(module_table) = module_docs {
-                            // Get the method documentation
-                            let method_docs: LuaResult<Table> = module_table.get(method);
-                            if let Ok(doc) = method_docs {
-                                // Format and return documentation
-                                let desc: String = doc.get("description")?;
-                                let params: Table = doc.get("params")?;
-                                let returns: String = doc.get("returns")?;
-
-                                let mut result = format!("--- {}\n\n", desc);
-                                result.push_str("Parameters:\n");
-
-                                // List parameters
-                                let param_count: i32 = params.len()?;
-                                for i in 1..=param_count {
-                                    let param: Table = params.get(i)?;
-                                    let name: String = param.get("name")?;
-                                    let type_name: String = param.get("type")?;
-                                    let param_desc: String = param.get("description").unwrap_or_default();
-
-                                    result.push_str(&format!("  {} ({})", name, type_name));
-                                    if !param_desc.is_empty() {
-                                        result.push_str(&format!(" - {}", param_desc));
-                                    }
-                                    result.push('\n');
-                                }
-
-                                result.push_str(&format!("\nReturns: {}", returns));
-                                Ok(result)
-                            } else {
-                                Ok(format!("Method '{}.{}' not found. Use help('{}') to see available methods.",
-                                           module, method, module))
-                            }
-                        } else {
-                            Ok(format!("Module '{}' not found. Use help() to see available modules.", module))
-                        }
-                    } else {
-                        Ok(format!("Invalid topic format: '{}'. Use help(), help(\"module\"), or help(\"module.method\").", topic))
-                    }
-                }
-            }
-        }).unwrap();
-
-        globals.set("help", help_fn).unwrap();
+        // Pass file contents to Lua
+        let globals = lua.globals();
+        let init_docs: Function = globals.get("init_help_docs")?;
+        let result = init_docs.call::<bool>(doc_files)?;
+        println!("init_help_docs result: {}", result);
+        Ok(())
     }
 }

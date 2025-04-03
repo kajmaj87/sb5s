@@ -2,11 +2,8 @@
 name = "lua_engine"
 version = "0.1.0"
 edition = "2024"
-build = "build.rs"
 
 [dependencies]
 logic = { path = "../logic" }
 mlua = { version = "0.10.3", features = ["luau", "serialize", "send", "error-send"] }
 walkdir = "2.5.0"
-[build-dependencies]
-regex = "1.11.1"
