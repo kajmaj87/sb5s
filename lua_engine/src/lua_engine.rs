@@ -316,10 +316,9 @@ impl LuaEngine {
                     if let Ok(entry) = entry {
                         let path = entry.path();
                         if path.is_file()
-                            && path.extension().map_or(false, |ext| ext == "lua")
+                            && path.extension().is_some_and(|ext| ext == "lua")
                             && path
-                                .file_name()
-                                .map_or(false, |name| name.to_string_lossy().contains(".d.lua"))
+                                .file_name().is_some_and(|name| name.to_string_lossy().contains(".d.lua"))
                         {
                             // Read the file content
                             if let Ok(content) = std::fs::read_to_string(&path) {

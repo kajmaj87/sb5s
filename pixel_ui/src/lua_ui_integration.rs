@@ -123,7 +123,7 @@ impl LuaUIBindings {
                     let mut processor = input_event_processor_clone.lock().unwrap();
                     processor
                         .register_shortcut(&key_combo, handler, &keymap)
-                        .map_err(|e| LuaError::external(e))
+                        .map_err(LuaError::external)
                 })
                 .and_then(|f| input.set("register_shortcut", f))
                 .unwrap();
@@ -136,7 +136,7 @@ impl LuaUIBindings {
                     let mut processor = input_event_processor_clone.lock().unwrap();
                     processor
                         .register_mouse(&button, handler, &keymap)
-                        .map_err(|e| LuaError::external(e))
+                        .map_err(LuaError::external)
                 })
                 .and_then(|f| input.set("register_mouse", f))
                 .unwrap();
@@ -149,7 +149,7 @@ impl LuaUIBindings {
                     let mut processor = input_event_processor_clone.lock().unwrap();
                     processor
                         .register_drag(&button, handler, &keymap)
-                        .map_err(|e| LuaError::external(e))
+                        .map_err(LuaError::external)
                 })
                 .and_then(|f| input.set("register_drag", f))
                 .unwrap();
@@ -160,7 +160,7 @@ impl LuaUIBindings {
                     let mut processor = input_event_processor_clone.lock().unwrap();
                     processor
                         .register_mouse_move(handler)
-                        .map_err(|e| LuaError::external(e))
+                        .map_err(LuaError::external)
                 })
                 .and_then(|f| input.set("register_mouse_move", f))
                 .unwrap();
@@ -171,7 +171,7 @@ impl LuaUIBindings {
                     let mut processor = input_event_processor_clone.lock().unwrap();
                     processor
                         .register_mouse_wheel(handler)
-                        .map_err(|e| LuaError::external(e))
+                        .map_err(LuaError::external)
                 })
                 .and_then(|f| input.set("register_mouse_wheel", f))
                 .unwrap();

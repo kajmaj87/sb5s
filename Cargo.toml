@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "pixel_ui",
-    "ui",
     "logic",
     "lua_engine"]
 resolver = "2"

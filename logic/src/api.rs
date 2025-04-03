@@ -31,6 +31,12 @@ pub struct LocationApi {
 pub struct EventApi {
     store: Arc<Mutex<EventStore>>,
 }
+impl Default for CoreApi {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CoreApi {
     /// Create a new instance of the logic API
     pub fn new() -> Self {

@@ -263,7 +263,7 @@ impl TileMap {
             let src_y = (tile.id as f32 / self.tiles_per_row).floor() * SOURCE_TILE_SIZE;
 
             let is_selected =
-                selected_pos.map_or(false, |sel_pos| pos.x == sel_pos.x && pos.y == sel_pos.y);
+                selected_pos.is_some_and(|sel_pos| pos.x == sel_pos.x && pos.y == sel_pos.y);
             let color = if is_selected { MAGENTA } else { WHITE };
 
             draw_texture_ex(
@@ -373,12 +373,10 @@ impl Direction {
             } else {
                 Direction::Left
             }
+        } else if dy > 0.0 {
+            Direction::Down
         } else {
-            if dy > 0.0 {
-                Direction::Down
-            } else {
-                Direction::Up
-            }
+            Direction::Up
         }
     }
 }
@@ -767,13 +765,13 @@ impl GameState {
 
         // Convert mouse position to world coordinates
         let mouse_world_pos;
-        let hover_pos;
+        
         {
             let camera = self.camera.lock().unwrap();
             let input = self.input.lock().unwrap();
             mouse_world_pos = camera.screen_to_world(input.get_mouse_position());
         }
-        hover_pos = TilePosition::from_world_pos(mouse_world_pos);
+        let hover_pos = TilePosition::from_world_pos(mouse_world_pos);
 
         // Handle tile selection
         let should_select;

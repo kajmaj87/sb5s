@@ -103,7 +103,7 @@ impl SimpleHotReloader {
             let path = entry.path().to_path_buf();
 
             // Only process .lua files
-            if path.extension().map_or(false, |ext| ext == "lua") {
+            if path.extension().is_some_and(|ext| ext == "lua") {
                 // Record file's modification time
                 if let Ok(metadata) = fs::metadata(&path) {
                     if let Ok(mod_time) = metadata.modified() {
@@ -116,12 +116,12 @@ impl SimpleHotReloader {
 
     // Update reload_script to handle module paths
     fn reload_script(&self, path: &Path, module_name: &str) -> bool {
-        if let Ok(_) = fs::read_to_string(path) {
+        if fs::read_to_string(path).is_ok() {
             let lua_engine = self.lua.lock().unwrap();
 
             // Force Lua to reload the module
             let result = lua_engine
-                .load(&format!(
+                .load(format!(
                     r#"
             -- Remove from package.loaded to force reload
             package.loaded['{}'] = nil

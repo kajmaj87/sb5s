@@ -234,7 +234,7 @@ mod tests {
     fn test_move_nonexistent_person() {
         // Setup
         let (sender, receiver) = mpsc::channel();
-        let mut repo = VecRepository::<PersonId, Person>::new();
+        let repo = VecRepository::<PersonId, Person>::new();
         let mut service = PersonService::new(repo, sender);
 
         // Try to move a nonexistent person
@@ -251,7 +251,7 @@ mod tests {
     fn test_create_multiple_persons() {
         // Setup
         let (sender, receiver) = mpsc::channel();
-        let mut repo = VecRepository::<PersonId, Person>::new();
+        let repo = VecRepository::<PersonId, Person>::new();
         let mut service = PersonService::new(repo, sender);
 
         // Create multiple persons
