@@ -468,7 +468,7 @@ impl InputEventProcessor {
     }
 
     // Helper to normalize the order of keys in key combinations
-    fn normalize_key_order(&self, keys: &mut Vec<KeyCode>) {
+    fn normalize_key_order(&self, keys: &mut [KeyCode]) {
         // Define a function to check if a key is a modifier
         let is_modifier = |key: &KeyCode| {
             matches!(

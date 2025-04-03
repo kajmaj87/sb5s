@@ -129,7 +129,7 @@ impl TilePosition {
         }
     }
 
-    fn to_world_pos(&self) -> Vec2 {
+    fn to_world_pos(self) -> Vec2 {
         Vec2::new(self.x as f32 * TILE_SIZE, self.y as f32 * TILE_SIZE)
     }
 }
@@ -765,7 +765,7 @@ impl GameState {
 
         // Convert mouse position to world coordinates
         let mouse_world_pos;
-        
+
         {
             let camera = self.camera.lock().unwrap();
             let input = self.input.lock().unwrap();

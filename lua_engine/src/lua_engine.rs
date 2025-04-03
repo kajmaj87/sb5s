@@ -312,23 +312,22 @@ impl LuaEngine {
 
         match std::fs::read_dir("scripts/api") {
             Ok(entries) => {
-                for entry in entries {
-                    if let Ok(entry) = entry {
-                        let path = entry.path();
-                        if path.is_file()
-                            && path.extension().is_some_and(|ext| ext == "lua")
-                            && path
-                                .file_name().is_some_and(|name| name.to_string_lossy().contains(".d.lua"))
-                        {
-                            // Read the file content
-                            if let Ok(content) = std::fs::read_to_string(&path) {
-                                // Get filename without extension as the key
-                                if let Some(filename) = path.file_stem() {
-                                    let key = filename.to_string_lossy().to_string();
-                                    // Remove the ".d" suffix if present
-                                    let key = key.strip_suffix(".d").unwrap_or(&key).to_string();
-                                    doc_files.insert(key, content);
-                                }
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_file()
+                        && path.extension().is_some_and(|ext| ext == "lua")
+                        && path
+                            .file_name()
+                            .is_some_and(|name| name.to_string_lossy().contains(".d.lua"))
+                    {
+                        // Read the file content
+                        if let Ok(content) = std::fs::read_to_string(&path) {
+                            // Get filename without extension as the key
+                            if let Some(filename) = path.file_stem() {
+                                let key = filename.to_string_lossy().to_string();
+                                // Remove the ".d" suffix if present
+                                let key = key.strip_suffix(".d").unwrap_or(&key).to_string();
+                                doc_files.insert(key, content);
                             }
                         }
                     }
