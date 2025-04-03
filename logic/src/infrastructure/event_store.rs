@@ -4,78 +4,69 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 
 /// Stores all domain events and allows subscribers to receive them
-pub(crate) struct EventStore {
+pub struct EventStore {
     events: Vec<DomainEvent>,
-    receiver: Receiver<DomainEvent>,
     subscribers: Vec<Sender<DomainEvent>>,
 }
 
 impl EventStore {
-    /// Create a new event store with a receiver for incoming events
-    pub fn new(receiver: Receiver<DomainEvent>) -> Self {
+    pub fn new() -> Self {
         EventStore {
             events: Vec::new(),
-            receiver,
             subscribers: Vec::new(),
         }
     }
 
-    /// Add a new subscriber that will receive future events
     pub fn subscribe(&mut self) -> Receiver<DomainEvent> {
         let (sender, receiver) = mpsc::channel();
+        println!(
+            "New subscriber added (total: {})",
+            self.subscribers.len() + 1
+        );
         self.subscribers.push(sender);
         receiver
     }
 
-    /// Get all historical events for rebuilding projections
+    pub fn publish(&mut self, event: DomainEvent) {
+        println!("Event received: {:?}", event);
+        // Store the event
+        self.events.push(event.clone());
+
+        // Notify all subscribers and remove dead ones
+        self.subscribers.retain(|sender| {
+            let result = sender.send(event.clone());
+            if result.is_err() {
+                println!("Failed to send to subscriber - removing");
+            }
+            result.is_ok()
+        });
+    }
+
     pub fn get_all_events(&self) -> Vec<DomainEvent> {
         self.events.clone()
     }
 
-    /// Get the total number of stored events
     pub fn event_count(&self) -> usize {
         self.events.len()
     }
-
-    /// Start processing events in a background thread
-    pub fn start_processing(mut self) -> thread::JoinHandle<()> {
-        thread::spawn(move || {
-            println!("Event store started processing events");
-
-            while let Ok(event) = self.receiver.recv() {
-                println!("Event received: {:?}", event);
-
-                // Store the event
-                self.events.push(event.clone());
-
-                // Notify all subscribers
-                self.subscribers
-                    .retain(|sender| sender.send(event.clone()).is_ok());
-            }
-
-            println!("Event store stopped processing events");
-        })
-    }
 }
-/// Create a new event store and return a sender for publishing events to it
+
 pub fn create_event_store() -> (Arc<Mutex<EventStore>>, Sender<DomainEvent>) {
+    let event_store = Arc::new(Mutex::new(EventStore::new()));
+    let event_store_clone = event_store.clone();
+
+    // Create a channel for publishing events
     let (sender, receiver) = mpsc::channel();
-    let event_store = EventStore::new(receiver);
 
-    let event_store_arc = Arc::new(Mutex::new(event_store));
-
-    let event_store_for_thread = event_store_arc.clone();
-
+    // Spawn a thread that processes events
     thread::spawn(move || {
-        let event_store = {
-            let mut guard = event_store_for_thread.lock().unwrap();
-            std::mem::replace(&mut *guard, EventStore::new(mpsc::channel().1))
-        };
-
-        event_store.start_processing().join().unwrap();
+        while let Ok(event) = receiver.recv() {
+            let mut store = event_store_clone.lock().unwrap();
+            store.publish(event);
+        }
     });
 
-    (event_store_arc, sender)
+    (event_store, sender)
 }
 
 /// Helper function to publish an event to a channel

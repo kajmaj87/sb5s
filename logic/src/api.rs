@@ -1,6 +1,7 @@
 mod event_api;
 mod location_api;
 mod person_api;
+mod projection_api;
 
 use crate::domain::service::person_service::PersonService;
 use crate::infrastructure::event_store::{create_event_store, EventStore};
@@ -10,12 +11,14 @@ use std::sync::{Arc, Mutex};
 
 pub use crate::domain::entity::person::Person;
 use crate::domain::entity::person::PersonId;
+use crate::domain::event::DomainEvent;
 
 /// Main API facade for the logic module
 pub struct CoreApi {
     person: PersonApi,
     location: LocationApi,
     event: EventApi,
+    projection: ProjectionApi,
 }
 /// API for person-related operations
 pub struct PersonApi {
@@ -25,6 +28,24 @@ pub struct PersonApi {
 /// API for location-related queries
 pub struct LocationApi {
     projection: Arc<Mutex<LocationOccupancyProjection>>,
+}
+
+// Projection trait and manager
+pub trait Projection: Send + 'static {
+    /** Apply a single event to update the projection state */
+    fn apply(&mut self, event: &DomainEvent);
+
+    /** Optional method to initialize the projection before replaying events */
+    fn initialize(&mut self) {}
+
+    /** Optional method called after all historical events have been applied */
+    fn after_rebuild(&mut self) {}
+
+    /** Name of the projection for logging/debugging */
+    fn name(&self) -> &str;
+}
+pub struct ProjectionApi {
+    projection_manager: ProjectionManager,
 }
 
 /// API for event-related operations
@@ -67,6 +88,7 @@ impl CoreApi {
                 projection: location_projection,
             },
             event: EventApi { store: event_store },
+            projection: ProjectionApi { projection_manager },
         }
     }
 
@@ -83,5 +105,8 @@ impl CoreApi {
     /// Access event-related operations
     pub fn event(&self) -> &EventApi {
         &self.event
+    }
+    pub fn projection(&self) -> &ProjectionApi {
+        &self.projection
     }
 }
