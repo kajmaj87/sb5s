@@ -1,4 +1,3 @@
-mod docs;
 mod hot_reload;
 pub mod lua_client;
 pub mod lua_engine;

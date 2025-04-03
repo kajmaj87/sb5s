@@ -71,7 +71,7 @@ impl<ID: NumericId, T: Clone> Repository<ID, T> for VecRepository<ID, T> {
         let entities: Vec<T> = self
             .data
             .iter()
-            .filter_map(|opt| opt.as_ref().map(|entity| entity.clone()))
+            .filter_map(|opt| opt.clone())
             .collect();
         Ok(entities)
     }

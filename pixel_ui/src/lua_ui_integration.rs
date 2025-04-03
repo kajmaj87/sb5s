@@ -1,8 +1,9 @@
 use crate::camera::CameraController;
-use crate::input::InputManager;
+use crate::input::{InputEventProcessor, InputManager};
 use crate::utils::draw_text_with_background;
 use crate::{TileMap, TilePosition};
 use lua_engine::lua_engine::LuaEngine;
+use lua_engine::LuaError;
 use lua_engine::LuaFunction;
 use macroquad::prelude::get_fps;
 use std::sync::{Arc, Mutex};
@@ -31,7 +32,7 @@ impl UIComponent {
                     Err(e) => eprintln!("Error fetching Label value from Lua: {}", e),
                 }
             }
-            UIComponent::Window { label, children } => {
+            UIComponent::Window { label: _, children } => {
                 // Draw the children
                 children.iter().for_each(|child| {
                     child.draw();
@@ -49,15 +50,19 @@ impl LuaUIBindings {
     pub fn new(
         lua_engine: Arc<Mutex<LuaEngine>>,
         camera: Arc<Mutex<CameraController>>,
-        input: Arc<Mutex<InputManager>>,
+        input_manager: Arc<Mutex<InputManager>>,
+        input_event_processor: Arc<Mutex<InputEventProcessor>>,
         map: Arc<Mutex<TileMap>>,
     ) -> Self {
         let components = Arc::new(Mutex::new(Vec::new()));
         {
             let lua = &lua_engine.lock().unwrap().lua;
             let globals = lua.globals();
+            let input = lua.create_table().unwrap();
             let ui = lua.create_table().unwrap();
             let tile = lua.create_table().unwrap();
+
+            // Register UI components
             {
                 let components = components.clone();
                 lua.create_function(move |_, (x, y, handler): (f32, f32, LuaFunction)| {
@@ -70,23 +75,30 @@ impl LuaUIBindings {
                 .and_then(|f| ui.set("label", f))
                 .unwrap();
             }
+
+            // Register FPS function
             lua.create_function(move |_, ()| Ok(get_fps()))
                 .and_then(|f| ui.set("fps", f))
                 .unwrap();
+
+            // Register tile hover function
             {
                 let camera = camera.clone();
+                let input_manager = input_manager.clone();
                 lua.create_function(move |_, ()| {
                     let tile = TilePosition::from_world_pos(
                         camera
                             .lock()
                             .unwrap()
-                            .screen_to_world(input.lock().unwrap().get_mouse_position()),
+                            .screen_to_world(input_manager.lock().unwrap().get_mouse_position()),
                     );
                     Ok((tile.x, tile.y))
                 })
                 .and_then(|f| tile.set("hovered", f))
                 .unwrap();
             }
+
+            // Register tile lookup function
             {
                 let map = map.clone();
                 lua.create_function(move |_, (x, y): (i32, i32)| {
@@ -100,13 +112,93 @@ impl LuaUIBindings {
                 .and_then(|f| tile.set("at", f))
                 .unwrap();
             }
+
+            // Register all input functions
+            {
+                // Register key shortcuts
+                let input_manager_clone = input_manager.clone();
+                let input_event_processor_clone = input_event_processor.clone();
+                lua.create_function(move |_, (key_combo, handler): (String, LuaFunction)| {
+                    let keymap = input_manager_clone.lock().unwrap().get_keymap().clone();
+                    let mut processor = input_event_processor_clone.lock().unwrap();
+                    processor
+                        .register_shortcut(&key_combo, handler, &keymap)
+                        .map_err(LuaError::external)
+                })
+                .and_then(|f| input.set("register_shortcut", f))
+                .unwrap();
+
+                // Register mouse handlers
+                let input_manager_clone = input_manager.clone();
+                let input_event_processor_clone = input_event_processor.clone();
+                lua.create_function(move |_, (button, handler): (String, LuaFunction)| {
+                    let keymap = input_manager_clone.lock().unwrap().get_keymap().clone();
+                    let mut processor = input_event_processor_clone.lock().unwrap();
+                    processor
+                        .register_mouse(&button, handler, &keymap)
+                        .map_err(LuaError::external)
+                })
+                .and_then(|f| input.set("register_mouse", f))
+                .unwrap();
+
+                // Register drag handlers
+                let input_manager_clone = input_manager.clone();
+                let input_event_processor_clone = input_event_processor.clone();
+                lua.create_function(move |_, (button, handler): (String, LuaFunction)| {
+                    let keymap = input_manager_clone.lock().unwrap().get_keymap().clone();
+                    let mut processor = input_event_processor_clone.lock().unwrap();
+                    processor
+                        .register_drag(&button, handler, &keymap)
+                        .map_err(LuaError::external)
+                })
+                .and_then(|f| input.set("register_drag", f))
+                .unwrap();
+
+                // Register mouse move handler
+                let input_event_processor_clone = input_event_processor.clone();
+                lua.create_function(move |_, handler: LuaFunction| {
+                    let mut processor = input_event_processor_clone.lock().unwrap();
+                    processor
+                        .register_mouse_move(handler)
+                        .map_err(LuaError::external)
+                })
+                .and_then(|f| input.set("register_mouse_move", f))
+                .unwrap();
+
+                // Register mouse wheel handler
+                let input_event_processor_clone = input_event_processor.clone();
+                lua.create_function(move |_, handler: LuaFunction| {
+                    let mut processor = input_event_processor_clone.lock().unwrap();
+                    processor
+                        .register_mouse_wheel(handler)
+                        .map_err(LuaError::external)
+                })
+                .and_then(|f| input.set("register_mouse_wheel", f))
+                .unwrap();
+
+                // Unregister by string ID
+                let input_manager_clone = input_manager.clone();
+                let input_event_processor_clone = input_event_processor.clone();
+                lua.create_function(move |_, event_id: String| {
+                    let keymap = input_manager_clone.lock().unwrap().get_keymap().clone();
+                    let mut processor = input_event_processor_clone.lock().unwrap();
+                    Ok(processor.unregister(&event_id, &keymap))
+                })
+                .and_then(|f| input.set("unregister", f))
+                .unwrap();
+
+                // Set input table to ui table
+                ui.set("input", input).unwrap();
+            }
+
+            // Set tile table to ui table
             ui.set("tile", tile).unwrap();
+
+            // Set ui table to globals
             globals.set("ui", ui).unwrap();
         }
         Self { components }
     }
-
-    pub fn update(&mut self) {}
     pub fn draw(&self) {
         // Draw the UI
         self.components

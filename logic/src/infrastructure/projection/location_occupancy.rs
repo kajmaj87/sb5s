@@ -21,7 +21,7 @@ impl LocationOccupancyProjection {
     fn add_person_to_location(&mut self, person_id: PersonId, location: Location) {
         self.occupancy
             .entry(location)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(person_id);
     }
 
@@ -78,7 +78,6 @@ impl Projection for LocationOccupancyProjection {
                 self.remove_person_from_location(*person_id, from_location);
                 self.add_person_to_location(*person_id, to_location.clone());
             }
-            _ => {}
         }
     }
 
