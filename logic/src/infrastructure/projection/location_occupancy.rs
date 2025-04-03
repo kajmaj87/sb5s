@@ -19,10 +19,7 @@ impl LocationOccupancyProjection {
     }
 
     fn add_person_to_location(&mut self, person_id: PersonId, location: Location) {
-        self.occupancy
-            .entry(location)
-            .or_default()
-            .push(person_id);
+        self.occupancy.entry(location).or_default().push(person_id);
     }
 
     fn remove_person_from_location(&mut self, person_id: PersonId, location: &Location) {
@@ -242,7 +239,6 @@ mod tests {
     fn test_moving_last_person_from_location() {
         let mut projection = LocationOccupancyProjection::new();
         let location1 = Location { x: 10, y: 20 };
-        let location2 = Location { x: 30, y: 40 };
 
         // Create a person at location1
         projection.apply(&create_person_created_event(1, 10, 20));
