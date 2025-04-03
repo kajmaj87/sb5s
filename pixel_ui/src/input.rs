@@ -234,16 +234,6 @@ impl InputManager {
         }
     }
 
-    // Helper to check if modifiers are active
-    pub fn are_modifiers_active(&self, modifiers: &[KeyCode]) -> bool {
-        let active = self.get_active_modifiers();
-        modifiers.iter().all(|m| active.contains(m))
-    }
-
-    // New method to get current state of modifier keys
-    pub fn get_modifier_state(&self) -> &HashMap<KeyCode, bool> {
-        &self.modifier_state
-    }
     pub fn get_events(&self) -> Vec<InputEvent> {
         self.collected_events.clone()
     }
@@ -586,20 +576,6 @@ impl InputEventProcessor {
     pub fn unregister(&mut self, event_id: &str, keymap: &HashMap<&'static str, KeyCode>) -> bool {
         if let Some(event_type) = self.parse_event(event_id, keymap) {
             self.event_handlers.remove(&event_type).is_some()
-        } else {
-            false
-        }
-    }
-
-    // Get all registered event types (useful for debugging)
-    pub fn get_registered_events(&self) -> Vec<&InputEventType> {
-        self.event_handlers.keys().collect()
-    }
-
-    // Check if a specific event has a handler
-    pub fn has_handler(&self, event_id: &str, keymap: &HashMap<&'static str, KeyCode>) -> bool {
-        if let Some(event_type) = self.parse_event(event_id, keymap) {
-            self.event_handlers.contains_key(&event_type)
         } else {
             false
         }

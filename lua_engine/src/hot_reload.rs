@@ -116,7 +116,7 @@ impl SimpleHotReloader {
 
     // Update reload_script to handle module paths
     fn reload_script(&self, path: &Path, module_name: &str) -> bool {
-        if let Ok(code) = fs::read_to_string(path) {
+        if let Ok(_) = fs::read_to_string(path) {
             let lua_engine = self.lua.lock().unwrap();
 
             // Force Lua to reload the module

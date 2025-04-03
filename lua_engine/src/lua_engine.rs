@@ -1,7 +1,6 @@
 use crate::hot_reload::SimpleHotReloader;
 use logic::CoreApi;
 use mlua::{Function, Lua, Table, Value};
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 
@@ -22,8 +21,6 @@ pub enum LuaResponse {
 
 pub struct LuaEngine {
     pub lua: Lua,
-    callbacks: HashMap<u32, Function>,
-    next_callback_id: u32,
     command_rx: mpsc::Receiver<LuaCommand>,
     hot_reload: SimpleHotReloader,
 }
@@ -42,7 +39,9 @@ impl LuaEngine {
         {
             println!("Error during lua bootstrap: {:?}", e);
         }
-        Self::init_help_system(&lua);
+        if let Err(e) = Self::init_help_system(&lua) {
+            println!("Error during lua help system initialization: {:?}", e);
+        }
         let globals = lua.globals();
         let hot_reload =
             SimpleHotReloader::new(Arc::new(Mutex::new(lua.clone())), Path::new("scripts"));
@@ -71,8 +70,6 @@ impl LuaEngine {
 
         Self {
             lua,
-            callbacks: HashMap::new(),
-            next_callback_id: 1,
             command_rx,
             hot_reload,
         }
@@ -347,7 +344,7 @@ impl LuaEngine {
             println!("Warning: No .d.lua files found in scripts/api directory");
         }
 
-        doc_files.iter().for_each(|(key, content)| {
+        doc_files.iter().for_each(|(key, _content)| {
             println!("Loaded help doc: {}", key);
         });
 

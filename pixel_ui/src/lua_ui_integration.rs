@@ -32,7 +32,7 @@ impl UIComponent {
                     Err(e) => eprintln!("Error fetching Label value from Lua: {}", e),
                 }
             }
-            UIComponent::Window { label, children } => {
+            UIComponent::Window { label: _, children } => {
                 // Draw the children
                 children.iter().for_each(|child| {
                     child.draw();
@@ -199,8 +199,6 @@ impl LuaUIBindings {
         }
         Self { components }
     }
-
-    pub fn update(&mut self) {}
     pub fn draw(&self) {
         // Draw the UI
         self.components

@@ -715,7 +715,7 @@ impl GameState {
     }
 
     fn hot_reload(&self) {
-        let mut lua_client = self.lua_client.lock().unwrap();
+        let lua_client = self.lua_client.lock().unwrap();
         lua_client.hot_reload();
     }
 

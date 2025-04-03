@@ -126,7 +126,7 @@ impl MyApp {
             globals.set("window", add_window).unwrap();
             let components_clone = Arc::clone(&components);
             let lua_console = lua
-                .create_function(move |lua_ctx, (script): (String)| {
+                .create_function(move |_, script: String| {
                     let mut components = components_clone.write().unwrap();
                     components.push(UIComponent::LuaConsole { script });
                     Ok(())
