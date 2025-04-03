@@ -1,6 +1,8 @@
 use crate::hot_reload::SimpleHotReloader;
-use logic::CoreApi;
-use mlua::{Function, Lua, Table, Value};
+use logic::domain::event::person_event::PersonEvent;
+use logic::domain::event::*;
+use logic::{CoreApi, Projection};
+use mlua::{Function, IntoLuaMulti, Lua, MultiValue, Table, Value};
 use std::path::Path;
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 
@@ -23,6 +25,84 @@ pub struct LuaEngine {
     pub lua: Lua,
     command_rx: mpsc::Receiver<LuaCommand>,
     hot_reload: SimpleHotReloader,
+}
+
+pub struct LuaProjection {
+    handler: Function,
+    name: String,
+}
+
+pub struct LuaEvent {
+    event: DomainEvent,
+}
+
+impl IntoLuaMulti for LuaEvent {
+    fn into_lua_multi(self, lua: &Lua) -> mlua::Result<MultiValue> {
+        match self.event {
+            DomainEvent::Person(person_event) => {
+                let table = lua.create_table()?;
+
+                // Common field for all Person events
+                table.set("type", "Person")?;
+
+                // Handle different PersonEvent variants
+                match person_event {
+                    PersonEvent::PersonCreated {
+                        person_id,
+                        name,
+                        location,
+                    } => {
+                        table.set("event_type", "PersonCreated")?;
+                        table.set("person_id", person_id.0)?; // Assuming PersonId has a field '0'
+                        table.set("name", name)?;
+                        table.set("x", location.x)?;
+                        table.set("y", location.y)?;
+                    }
+                    PersonEvent::PersonMoved {
+                        person_id,
+                        from_location,
+                        to_location,
+                    } => {
+                        table.set("event_type", "PersonMoved")?;
+                        table.set("person_id", person_id.0)?;
+
+                        // Create nested tables for from/to locations
+                        let from = lua.create_table()?;
+                        from.set("x", from_location.x)?;
+                        from.set("y", from_location.y)?;
+                        table.set("from_location", from)?;
+
+                        let to = lua.create_table()?;
+                        to.set("x", to_location.x)?;
+                        to.set("y", to_location.y)?;
+                        table.set("to_location", to)?;
+                    } // Add other PersonEvent variants here as needed
+                }
+                let table_value = Value::Table(table);
+                let mut values = MultiValue::new();
+                values.push_front(table_value);
+
+                Ok(values)
+            } // Add other DomainEvent variants here as needed
+        }
+    }
+}
+
+impl Projection for LuaProjection {
+    fn apply(&mut self, event: &DomainEvent) {
+        if let Err(e) = self.handler.call::<()>(LuaEvent {
+            event: event.clone(),
+        }) {
+            println!(
+                "Error calling Lua handler inside projection {}: {:?}",
+                self.name, e
+            );
+        }
+    }
+
+    fn name(&self) -> &str {
+        self.name.as_str()
+    }
 }
 
 impl LuaEngine {
@@ -53,17 +133,20 @@ impl LuaEngine {
         let person_table = lua.create_table().unwrap();
         let location_table = lua.create_table().unwrap();
         let event_table = lua.create_table().unwrap();
+        let projection_table = lua.create_table().unwrap();
 
         // Setup the APIs
         Self::setup_person_api(&lua, &person_table, Arc::clone(&core));
         Self::setup_location_api(&lua, &location_table, Arc::clone(&core));
         Self::setup_event_api(&lua, &event_table, Arc::clone(&core));
+        Self::setup_projection_api(&lua, &projection_table, Arc::clone(&core));
 
         // Create main API table
         let api_table = lua.create_table().unwrap();
         api_table.set("person", person_table).unwrap();
         api_table.set("location", location_table).unwrap();
         api_table.set("event", event_table).unwrap();
+        api_table.set("projection", projection_table).unwrap();
 
         // Set API as global
         globals.set("api", api_table).unwrap();
@@ -301,6 +384,25 @@ impl LuaEngine {
             })
             .unwrap();
         table.set("count", event_count).unwrap();
+    }
+
+    fn setup_projection_api(lua: &Lua, table: &Table, core: Arc<RwLock<CoreApi>>) {
+        let core_clone = Arc::clone(&core);
+        let register_projection = lua
+            .create_function(move |_, (name, handler): (String, Function)| {
+                let projection = LuaProjection {
+                    handler,
+                    name: name.clone(),
+                };
+                core_clone
+                    .write()
+                    .unwrap()
+                    .projection()
+                    .register_projection(projection);
+                Ok(())
+            })
+            .unwrap();
+        table.set("register", register_projection).unwrap();
     }
 
     fn init_help_system(lua: &Lua) -> mlua::Result<()> {

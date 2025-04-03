@@ -1,24 +1,9 @@
 pub(crate) mod location_occupancy;
 
-use crate::domain::event::DomainEvent;
 use crate::infrastructure::event_store::EventStore;
+use crate::Projection;
 pub use location_occupancy::LocationOccupancyProjection;
 use std::sync::Mutex;
-
-// Projection trait and manager
-pub(crate) trait Projection: Send + 'static {
-    /** Apply a single event to update the projection state */
-    fn apply(&mut self, event: &DomainEvent);
-
-    /** Optional method to initialize the projection before replaying events */
-    fn initialize(&mut self) {}
-
-    /** Optional method called after all historical events have been applied */
-    fn after_rebuild(&mut self) {}
-
-    /** Name of the projection for logging/debugging */
-    fn name(&self) -> &str;
-}
 
 /** Projection manager that handles creating and rebuilding projections */
 pub struct ProjectionManager {
