@@ -1,6 +1,7 @@
 use crate::domain::event::DomainEvent;
+use parking_lot::Mutex;
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc};
 use std::thread;
 
 /// Stores all domain events and allows subscribers to receive them
@@ -28,7 +29,7 @@ impl EventStore {
     }
 
     pub fn publish(&mut self, event: DomainEvent) {
-        println!("Event received: {:?}", event);
+        // println!("Event received: {:?}", event);
         // Store the event
         self.events.push(event.clone());
 
@@ -61,7 +62,7 @@ pub fn create_event_store() -> (Arc<Mutex<EventStore>>, Sender<DomainEvent>) {
     // Spawn a thread that processes events
     thread::spawn(move || {
         while let Ok(event) = receiver.recv() {
-            let mut store = event_store_clone.lock().unwrap();
+            let mut store = event_store_clone.lock();
             store.publish(event);
         }
     });

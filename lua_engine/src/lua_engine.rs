@@ -3,8 +3,9 @@ use logic::domain::event::person_event::PersonEvent;
 use logic::domain::event::*;
 use logic::{CoreApi, Projection};
 use mlua::{Function, IntoLuaMulti, Lua, MultiValue, Table, Value};
+use parking_lot::{Mutex, RwLock};
 use std::path::Path;
-use std::sync::{mpsc, Arc, Mutex, RwLock};
+use std::sync::{mpsc, Arc};
 
 // Commands that can be sent to the Lua worker
 pub enum LuaCommand {
@@ -210,7 +211,7 @@ impl LuaEngine {
         let core_clone = Arc::clone(&core);
         let create_person = lua
             .create_function(move |lua_ctx, (name, x, y): (String, i32, i32)| {
-                match core_clone.read().unwrap().person().create(name, x, y) {
+                match core_clone.read().person().create(name, x, y) {
                     Ok(person) => {
                         // Convert Person to Lua table using the provided lua context
                         let person_table = lua_ctx.create_table()?;
@@ -234,7 +235,7 @@ impl LuaEngine {
         let core_clone = Arc::clone(&core);
         let move_person = lua
             .create_function(move |lua_ctx, (id, x, y): (u32, i32, i32)| {
-                match core_clone.read().unwrap().person().move_to(id, x, y) {
+                match core_clone.read().person().move_to(id, x, y) {
                     Ok(person) => {
                         // Convert Person to Lua table using the provided lua context
                         let person_table = lua_ctx.create_table()?;
@@ -258,7 +259,7 @@ impl LuaEngine {
         let core_clone = Arc::clone(&core);
         let get_person = lua
             .create_function(move |lua_ctx, id: u32| {
-                match core_clone.read().unwrap().person().get(id) {
+                match core_clone.read().person().get(id) {
                     Ok(person) => {
                         // Convert Person to Lua table using the provided lua context
                         let person_table = lua_ctx.create_table()?;
@@ -282,7 +283,7 @@ impl LuaEngine {
         let core_clone = Arc::clone(&core);
         let get_all_persons = lua
             .create_function(move |lua_ctx, ()| {
-                match core_clone.read().unwrap().person().get_all() {
+                match core_clone.read().person().get_all() {
                     Ok(persons) => {
                         // Convert Vec<Person> to Lua table using the provided lua context
                         let persons_table = lua_ctx.create_table()?;
@@ -314,7 +315,7 @@ impl LuaEngine {
         let core_clone = Arc::clone(&core);
         let get_people_at = lua
             .create_function(move |lua_ctx, (x, y): (i32, i32)| {
-                let people_ids = core_clone.read().unwrap().location().get_people_at(x, y);
+                let people_ids = core_clone.read().location().get_people_at(x, y);
 
                 // Convert Vec<u32> to Lua table using the provided lua context
                 let people_table = lua_ctx.create_table()?;
@@ -332,7 +333,7 @@ impl LuaEngine {
         let core_clone = Arc::clone(&core);
         let get_occupied = lua
             .create_function(move |lua_ctx, ()| {
-                let locations = core_clone.read().unwrap().location().get_occupied();
+                let locations = core_clone.read().location().get_occupied();
 
                 // Convert Vec<(i32, i32)> to Lua table using the provided lua context
                 let locations_table = lua_ctx.create_table()?;
@@ -354,7 +355,7 @@ impl LuaEngine {
         let core_clone = Arc::clone(&core);
         let most_crowded = lua
             .create_function(move |_, ()| {
-                if let Some((x, y, count)) = core_clone.read().unwrap().location().most_crowded() {
+                if let Some((x, y, count)) = core_clone.read().location().most_crowded() {
                     Ok((Some(x), Some(y), Some(count)))
                 } else {
                     Ok((None, None, None))
@@ -367,7 +368,7 @@ impl LuaEngine {
         let core_clone = Arc::clone(&core);
         let occupied_count = lua
             .create_function(move |_, ()| {
-                let count = core_clone.read().unwrap().location().occupied_count();
+                let count = core_clone.read().location().occupied_count();
                 Ok(count)
             })
             .unwrap();
@@ -379,7 +380,7 @@ impl LuaEngine {
         let core_clone = Arc::clone(&core);
         let event_count = lua
             .create_function(move |_, ()| {
-                let count = core_clone.read().unwrap().event().count();
+                let count = core_clone.read().event().count();
                 Ok(count)
             })
             .unwrap();
@@ -396,7 +397,6 @@ impl LuaEngine {
                 };
                 core_clone
                     .write()
-                    .unwrap()
                     .projection()
                     .register_projection(projection);
                 Ok(())

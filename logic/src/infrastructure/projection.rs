@@ -3,7 +3,7 @@ pub(crate) mod location_occupancy;
 use crate::infrastructure::event_store::EventStore;
 use crate::Projection;
 pub use location_occupancy::LocationOccupancyProjection;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 /** Projection manager that handles creating and rebuilding projections */
 pub struct ProjectionManager {
@@ -22,19 +22,19 @@ impl ProjectionManager {
 
         // Get a receiver for new events
         let receiver = {
-            let mut store = self.event_store.lock().unwrap();
+            let mut store = self.event_store.lock();
             store.subscribe()
         };
 
         // Get all historical events
         let historical_events = {
-            let store = self.event_store.lock().unwrap();
+            let store = self.event_store.lock();
             store.get_all_events()
         };
 
         // Start a thread to rebuild from history and then process live events
         std::thread::spawn(move || {
-            let mut projection = projection_clone.lock().unwrap();
+            let mut projection = projection_clone.lock();
 
             println!("Initializing projection: {}", projection.name());
             projection.initialize();
@@ -58,18 +58,18 @@ impl ProjectionManager {
 
             println!(
                 "Starting to process live events for projection: {}",
-                projection_clone.lock().unwrap().name()
+                projection_clone.lock().name()
             );
 
             // Process live events
             while let Ok(event) = receiver.recv() {
-                let mut projection = projection_clone.lock().unwrap();
+                let mut projection = projection_clone.lock();
                 projection.apply(&event);
             }
 
             println!(
                 "Stopped processing events for projection: {}",
-                projection_clone.lock().unwrap().name()
+                projection_clone.lock().name()
             );
         });
 

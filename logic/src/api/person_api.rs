@@ -8,7 +8,6 @@ impl PersonApi {
         let location = Location { x, y };
         self.service
             .lock()
-            .unwrap()
             .create_person(name, location)
             .map_err(|e| format!("Failed to create person: {:?}", e))
     }
@@ -18,7 +17,6 @@ impl PersonApi {
         let location = Location { x, y };
         self.service
             .lock()
-            .unwrap()
             .move_person(PersonId(person_id), location)
             .map_err(|e| format!("Failed to move person: {:?}", e))
     }
@@ -27,7 +25,6 @@ impl PersonApi {
     pub fn get(&self, person_id: u32) -> Result<Person, String> {
         self.service
             .lock()
-            .unwrap()
             .get_person(PersonId(person_id))
             .map_err(|e| format!("Failed to get person: {:?}", e))
     }
@@ -36,7 +33,6 @@ impl PersonApi {
     pub fn get_all(&self) -> Result<Vec<Person>, String> {
         self.service
             .lock()
-            .unwrap()
             .get_all_persons()
             .map_err(|e| format!("Failed to get all persons: {:?}", e))
     }

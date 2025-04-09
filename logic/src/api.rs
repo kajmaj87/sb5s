@@ -7,7 +7,8 @@ use crate::domain::service::person_service::PersonService;
 use crate::infrastructure::event_store::{create_event_store, EventStore};
 use crate::infrastructure::projection::{LocationOccupancyProjection, ProjectionManager};
 use crate::repo::VecRepository;
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 
 pub use crate::domain::entity::person::Person;
 use crate::domain::entity::person::PersonId;

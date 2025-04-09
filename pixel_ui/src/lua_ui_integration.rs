@@ -6,7 +6,8 @@ use lua_engine::lua_engine::LuaEngine;
 use lua_engine::LuaError;
 use lua_engine::LuaFunction;
 use macroquad::prelude::get_fps;
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 
 enum UIComponent {
     Label {
@@ -56,7 +57,7 @@ impl LuaUIBindings {
     ) -> Self {
         let components = Arc::new(Mutex::new(Vec::new()));
         {
-            let lua = &lua_engine.lock().unwrap().lua;
+            let lua = &lua_engine.lock().lua;
             let globals = lua.globals();
             let input = lua.create_table().unwrap();
             let ui = lua.create_table().unwrap();
@@ -66,10 +67,7 @@ impl LuaUIBindings {
             {
                 let components = components.clone();
                 lua.create_function(move |_, (x, y, handler): (f32, f32, LuaFunction)| {
-                    components
-                        .lock()
-                        .unwrap()
-                        .push(UIComponent::Label { x, y, handler });
+                    components.lock().push(UIComponent::Label { x, y, handler });
                     Ok(())
                 })
                 .and_then(|f| ui.set("label", f))
@@ -89,8 +87,7 @@ impl LuaUIBindings {
                     let tile = TilePosition::from_world_pos(
                         camera
                             .lock()
-                            .unwrap()
-                            .screen_to_world(input_manager.lock().unwrap().get_mouse_position()),
+                            .screen_to_world(input_manager.lock().get_mouse_position()),
                     );
                     Ok((tile.x, tile.y))
                 })
@@ -102,7 +99,7 @@ impl LuaUIBindings {
             {
                 let map = map.clone();
                 lua.create_function(move |_, (x, y): (i32, i32)| {
-                    let binding = map.lock().unwrap();
+                    let binding = map.lock();
                     let tile = binding.get_tile(&TilePosition::new(x, y));
                     match tile {
                         Some(tile) => Ok(Some(tile.id)),
@@ -119,8 +116,8 @@ impl LuaUIBindings {
                 let input_manager_clone = input_manager.clone();
                 let input_event_processor_clone = input_event_processor.clone();
                 lua.create_function(move |_, (key_combo, handler): (String, LuaFunction)| {
-                    let keymap = input_manager_clone.lock().unwrap().get_keymap().clone();
-                    let mut processor = input_event_processor_clone.lock().unwrap();
+                    let keymap = input_manager_clone.lock().get_keymap().clone();
+                    let mut processor = input_event_processor_clone.lock();
                     processor
                         .register_shortcut(&key_combo, handler, &keymap)
                         .map_err(LuaError::external)
@@ -132,8 +129,8 @@ impl LuaUIBindings {
                 let input_manager_clone = input_manager.clone();
                 let input_event_processor_clone = input_event_processor.clone();
                 lua.create_function(move |_, (button, handler): (String, LuaFunction)| {
-                    let keymap = input_manager_clone.lock().unwrap().get_keymap().clone();
-                    let mut processor = input_event_processor_clone.lock().unwrap();
+                    let keymap = input_manager_clone.lock().get_keymap().clone();
+                    let mut processor = input_event_processor_clone.lock();
                     processor
                         .register_mouse(&button, handler, &keymap)
                         .map_err(LuaError::external)
@@ -145,8 +142,8 @@ impl LuaUIBindings {
                 let input_manager_clone = input_manager.clone();
                 let input_event_processor_clone = input_event_processor.clone();
                 lua.create_function(move |_, (button, handler): (String, LuaFunction)| {
-                    let keymap = input_manager_clone.lock().unwrap().get_keymap().clone();
-                    let mut processor = input_event_processor_clone.lock().unwrap();
+                    let keymap = input_manager_clone.lock().get_keymap().clone();
+                    let mut processor = input_event_processor_clone.lock();
                     processor
                         .register_drag(&button, handler, &keymap)
                         .map_err(LuaError::external)
@@ -157,7 +154,7 @@ impl LuaUIBindings {
                 // Register mouse move handler
                 let input_event_processor_clone = input_event_processor.clone();
                 lua.create_function(move |_, handler: LuaFunction| {
-                    let mut processor = input_event_processor_clone.lock().unwrap();
+                    let mut processor = input_event_processor_clone.lock();
                     processor
                         .register_mouse_move(handler)
                         .map_err(LuaError::external)
@@ -168,7 +165,7 @@ impl LuaUIBindings {
                 // Register mouse wheel handler
                 let input_event_processor_clone = input_event_processor.clone();
                 lua.create_function(move |_, handler: LuaFunction| {
-                    let mut processor = input_event_processor_clone.lock().unwrap();
+                    let mut processor = input_event_processor_clone.lock();
                     processor
                         .register_mouse_wheel(handler)
                         .map_err(LuaError::external)
@@ -180,8 +177,8 @@ impl LuaUIBindings {
                 let input_manager_clone = input_manager.clone();
                 let input_event_processor_clone = input_event_processor.clone();
                 lua.create_function(move |_, event_id: String| {
-                    let keymap = input_manager_clone.lock().unwrap().get_keymap().clone();
-                    let mut processor = input_event_processor_clone.lock().unwrap();
+                    let keymap = input_manager_clone.lock().get_keymap().clone();
+                    let mut processor = input_event_processor_clone.lock();
                     Ok(processor.unregister(&event_id, &keymap))
                 })
                 .and_then(|f| input.set("unregister", f))
@@ -201,12 +198,8 @@ impl LuaUIBindings {
     }
     pub fn draw(&self) {
         // Draw the UI
-        self.components
-            .lock()
-            .unwrap()
-            .iter()
-            .for_each(|component| {
-                component.draw();
-            })
+        self.components.lock().iter().for_each(|component| {
+            component.draw();
+        })
     }
 }

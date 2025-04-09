@@ -1,7 +1,8 @@
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 pub struct SimpleHotReloader {
@@ -117,7 +118,7 @@ impl SimpleHotReloader {
     // Update reload_script to handle module paths
     fn reload_script(&self, path: &Path, module_name: &str) -> bool {
         if fs::read_to_string(path).is_ok() {
-            let lua_engine = self.lua.lock().unwrap();
+            let lua_engine = self.lua.lock();
 
             // Force Lua to reload the module
             let result = lua_engine
