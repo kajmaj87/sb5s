@@ -358,6 +358,9 @@ checksum = "30bde2b3dc3671ae49d8e2e9f044c7c005836e7a023ee57cffa25ab82764bb9e"
 [[package]]
 name = "logic"
 version = "0.1.0"
+dependencies = [
+ "parking_lot",
+]
 
 [[package]]
 name = "lua_engine"
@@ -365,6 +368,7 @@ version = "0.1.0"
 dependencies = [
  "logic",
  "mlua",
+ "parking_lot",
  "walkdir",
 ]
 
@@ -713,6 +717,7 @@ dependencies = [
  "arboard",
  "lua_engine",
  "macroquad",
+ "parking_lot",
 ]
 
 [[package]]

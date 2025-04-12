@@ -3,7 +3,8 @@ use lua_engine::lua_client::LuaClient;
 use macroquad::hash;
 use macroquad::prelude::*;
 use macroquad::ui::{root_ui, widgets};
-use std::sync::{mpsc, Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::{mpsc, Arc};
 
 pub struct Console {
     pub(crate) visible: bool,
@@ -50,7 +51,6 @@ impl Console {
         let pending_result = self
             .lua_client
             .lock()
-            .unwrap()
             .execute_non_blocking(command.as_str());
         self.pending_commands.push(pending_result);
     }

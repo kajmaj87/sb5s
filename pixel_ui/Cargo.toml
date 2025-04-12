@@ -5,5 +5,6 @@ edition = "2024"
 
 [dependencies]
 lua_engine = { path = "../lua_engine" }
+parking_lot = "0.12.3"
 arboard = "3.4.1"
 macroquad = "0.4.13"

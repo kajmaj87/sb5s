@@ -5,10 +5,11 @@ mod input;
 mod lua_ui_integration;
 
 use macroquad::prelude::*;
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc};
 use std::{fs, thread};
 
 // Constants
@@ -641,7 +642,7 @@ impl GameState {
         // Create the client that the game state will use
         let lua_client = Arc::new(Mutex::new(LuaClient::new(command_tx.clone())));
         let map = Arc::new(Mutex::new(TileMap::new().await));
-        let initial_center = { map.lock().unwrap().get_initial_center() };
+        let initial_center = { map.lock().get_initial_center() };
         let camera = Arc::new(Mutex::new(CameraController::new(initial_center)));
         let input = Arc::new(Mutex::new(InputManager::new()));
         let input_event_processor = Arc::new(Mutex::new(InputEventProcessor::new()));
@@ -713,7 +714,7 @@ impl GameState {
     }
 
     fn hot_reload(&self) {
-        let lua_client = self.lua_client.lock().unwrap();
+        let lua_client = self.lua_client.lock();
         lua_client.hot_reload();
     }
 
@@ -732,12 +733,9 @@ impl GameState {
 
         // Update input
         {
-            self.input.lock().unwrap().update();
-            let events = self.input.lock().unwrap().get_events();
-            self.input_event_processor
-                .lock()
-                .unwrap()
-                .process_events(events);
+            self.input.lock().update();
+            let events = self.input.lock().get_events();
+            self.input_event_processor.lock().process_events(events);
         }
 
         // Update and draw the console
@@ -747,8 +745,8 @@ impl GameState {
         }
         // Update camera with input
         {
-            let mut camera = self.camera.lock().unwrap();
-            let input = self.input.lock().unwrap();
+            let mut camera = self.camera.lock();
+            let input = self.input.lock();
             camera.update(&input);
         }
 
@@ -767,8 +765,8 @@ impl GameState {
         let mouse_world_pos;
 
         {
-            let camera = self.camera.lock().unwrap();
-            let input = self.input.lock().unwrap();
+            let camera = self.camera.lock();
+            let input = self.input.lock();
             mouse_world_pos = camera.screen_to_world(input.get_mouse_position());
         }
         let hover_pos = TilePosition::from_world_pos(mouse_world_pos);
@@ -776,14 +774,14 @@ impl GameState {
         // Handle tile selection
         let should_select;
         {
-            let input = self.input.lock().unwrap();
+            let input = self.input.lock();
             should_select = input.is_left_mouse_click();
         }
 
         if should_select {
             // Check if tile exists with lock
             let tile_exists = {
-                let map = self.map.lock().unwrap();
+                let map = self.map.lock();
                 map.get_tile(&hover_pos).is_some()
             };
 
@@ -799,7 +797,7 @@ impl GameState {
                 // Check conditions for tile placement
                 let should_place_tile;
                 {
-                    let input = self.input.lock().unwrap();
+                    let input = self.input.lock();
                     should_place_tile = input.should_place_tile(self.selected_pos.as_ref());
                 }
 
@@ -808,13 +806,13 @@ impl GameState {
                     if let Some(selected_pos) = &self.selected_pos {
                         // Get the tile ID from the selected position
                         let selected_tile_id = {
-                            let map = self.map.lock().unwrap();
+                            let map = self.map.lock();
                             map.get_tile(selected_pos).map(|tile| tile.id)
                         };
 
                         // Place the tile if we found a valid ID
                         if let Some(tile_id) = selected_tile_id {
-                            let mut map = self.map.lock().unwrap();
+                            let mut map = self.map.lock();
                             map.place_tile(&hover_pos, tile_id);
                         }
                     }
@@ -873,12 +871,12 @@ impl GameState {
 
         // Draw world
         {
-            let camera = self.camera.lock().unwrap();
+            let camera = self.camera.lock();
             camera.apply();
 
             // Draw map with locked access
             {
-                let mut map = self.map.lock().unwrap();
+                let mut map = self.map.lock();
                 map.draw(&camera, self.selected_pos.as_ref());
             }
 
@@ -888,7 +886,7 @@ impl GameState {
 
             // Highlight hovered tile if not dragging (only in debug mode)
             {
-                let input = self.input.lock().unwrap();
+                let input = self.input.lock();
                 if input.get_drag_delta().is_none() {
                     let mouse_pos = input.get_mouse_position();
                     let hover_pos = TilePosition::from_world_pos(camera.screen_to_world(mouse_pos));
@@ -903,7 +901,7 @@ impl GameState {
 
         // Draw tile preview with locked map
         {
-            let map = self.map.lock().unwrap();
+            let map = self.map.lock();
             self.ui
                 .draw_selected_tile_preview(self.selected_pos.as_ref(), &map);
         }
@@ -933,9 +931,9 @@ impl GameState {
 
         // Draw debug window if enabled
         {
-            let camera = self.camera.lock().unwrap();
-            let input = self.input.lock().unwrap();
-            let map = self.map.lock().unwrap();
+            let camera = self.camera.lock();
+            let input = self.input.lock();
+            let map = self.map.lock();
             self.debug
                 .draw(&map, &camera, self.selected_pos.as_ref(), &input);
         }
@@ -987,13 +985,13 @@ async fn main() {
     let (command_tx, command_rx) = mpsc::channel();
     let lua_engine = Arc::new(Mutex::new(LuaEngine::new(command_rx)));
     let mut game = GameState::new(command_tx, lua_engine.clone()).await;
-    if let Err(e) = lua_engine.lock().unwrap().run_script("require('init')") {
+    if let Err(e) = lua_engine.lock().run_script("require('init')") {
         println!("Error during lua initialization: {:?}", e);
     }
     // Create game state with client
     // spawn thread to run the lua engine
     thread::spawn(move || {
-        lua_engine.lock().unwrap().run();
+        lua_engine.lock().run();
     });
 
     loop {
