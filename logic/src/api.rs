@@ -6,9 +6,9 @@ mod projection_api;
 use crate::domain::service::person_service::PersonService;
 use crate::infrastructure::event_store::{create_event_store, EventStore};
 use crate::infrastructure::projection::{LocationOccupancyProjection, ProjectionManager};
-use crate::repo::VecRepository;
 use parking_lot::Mutex;
 use std::sync::Arc;
+use utils::repo::VecRepository;
 
 pub use crate::domain::entity::person::Person;
 use crate::domain::entity::person::PersonId;

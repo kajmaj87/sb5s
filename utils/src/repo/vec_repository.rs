@@ -1,17 +1,17 @@
 use crate::repo::{NumericId, Repository};
 
 #[derive(Debug)]
-pub(crate) enum VecRepositoryError {
+pub enum VecRepositoryError {
     NotFound,
 }
 
-pub(crate) struct VecRepository<ID: NumericId, T> {
+pub struct VecRepository<ID: NumericId, T> {
     data: Vec<Option<T>>,
     _id_type: std::marker::PhantomData<ID>,
 }
 
 impl<ID: NumericId, T> VecRepository<ID, T> {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         VecRepository {
             data: Vec::new(),
             _id_type: Default::default(),
@@ -21,7 +21,6 @@ impl<ID: NumericId, T> VecRepository<ID, T> {
 
 impl<ID: NumericId, T: Clone> Repository<ID, T> for VecRepository<ID, T> {
     type Error = VecRepositoryError;
-
     fn get(&self, id: ID) -> Result<T, Self::Error> {
         let index = id.value() as usize;
         if index >= self.data.len() {
@@ -68,11 +67,7 @@ impl<ID: NumericId, T: Clone> Repository<ID, T> for VecRepository<ID, T> {
     }
 
     fn get_all(&self) -> Result<Vec<T>, Self::Error> {
-        let entities: Vec<T> = self
-            .data
-            .iter()
-            .filter_map(|opt| opt.clone())
-            .collect();
+        let entities: Vec<T> = self.data.iter().filter_map(|opt| opt.clone()).collect();
         Ok(entities)
     }
     fn create<F>(&mut self, entity_factory: F) -> Result<T, Self::Error>

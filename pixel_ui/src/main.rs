@@ -3,6 +3,7 @@ mod console;
 mod debug;
 mod input;
 mod lua_ui_integration;
+mod textures;
 
 use macroquad::prelude::*;
 use parking_lot::Mutex;
@@ -646,12 +647,14 @@ impl GameState {
         let camera = Arc::new(Mutex::new(CameraController::new(initial_center)));
         let input = Arc::new(Mutex::new(InputManager::new()));
         let input_event_processor = Arc::new(Mutex::new(InputEventProcessor::new()));
+        let texture_atlas_manager = Arc::new(Mutex::new(textures::TextureAtlasManager::new()));
         let lua_ui = LuaUIBindings::new(
             lua_engine.clone(),
             camera.clone(),
             input.clone(),
             input_event_processor.clone(),
             map.clone(),
+            texture_atlas_manager.clone(),
         );
 
         // Load character textures

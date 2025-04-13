@@ -1,5 +1,5 @@
 mod vec_repository;
-pub(crate) trait Repository<ID, Entity> {
+pub trait Repository<ID, Entity> {
     type Error;
     fn get(&self, id: ID) -> Result<Entity, Self::Error>;
     fn add(&mut self, entity: Entity) -> Result<ID, Self::Error>;
@@ -11,9 +11,9 @@ pub(crate) trait Repository<ID, Entity> {
         F: FnOnce(ID) -> Entity;
 }
 
-pub(crate) trait NumericId: Copy + Eq + std::fmt::Debug {
+pub trait NumericId: Copy + Eq + std::fmt::Debug {
     fn value(&self) -> u32;
     fn from_value(value: u32) -> Self;
 }
 
-pub(crate) use vec_repository::VecRepository;
+pub use vec_repository::VecRepository;

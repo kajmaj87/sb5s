@@ -1,5 +1,6 @@
 use crate::camera::CameraController;
 use crate::input::{InputEventProcessor, InputManager};
+use crate::textures::TextureAtlasManager;
 use crate::utils::draw_text_with_background;
 use crate::{TileMap, TilePosition};
 use lua_engine::lua_engine::LuaEngine;
@@ -54,14 +55,19 @@ impl LuaUIBindings {
         input_manager: Arc<Mutex<InputManager>>,
         input_event_processor: Arc<Mutex<InputEventProcessor>>,
         map: Arc<Mutex<TileMap>>,
+        texture_atlas_manager: Arc<Mutex<TextureAtlasManager>>,
     ) -> Self {
         let components = Arc::new(Mutex::new(Vec::new()));
         {
             let lua = &lua_engine.lock().lua;
             let globals = lua.globals();
+
+            // Create all the main tables
             let input = lua.create_table().unwrap();
             let ui = lua.create_table().unwrap();
             let tile = lua.create_table().unwrap();
+            let atlas = lua.create_table().unwrap();
+            let terrain = lua.create_table().unwrap();
 
             // Register UI components
             {
@@ -188,8 +194,30 @@ impl LuaUIBindings {
                 ui.set("input", input).unwrap();
             }
 
-            // Set tile table to ui table
+            {
+                let atlas_manager = texture_atlas_manager.clone();
+                lua.create_async_function(
+                    move |_, (path, tile_size, width_in_tiles): (String, f32, u32)| {
+                        let atlas_manager = atlas_manager.clone();
+                        async move {
+                            let mut manager = atlas_manager.lock();
+                            match manager.create_atlas(&path, tile_size, width_in_tiles).await {
+                                Ok(atlas_id) => Ok(atlas_id),
+                                Err(e) => Err(LuaError::external(format!(
+                                    "Failed to create atlas: {}",
+                                    e
+                                ))),
+                            }
+                        }
+                    },
+                )
+                .and_then(|f| atlas.set("register", f))
+                .unwrap();
+            }
+
+            // Set all tables to their parent tables
             ui.set("tile", tile).unwrap();
+            ui.set("atlas", atlas).unwrap();
 
             // Set ui table to globals
             globals.set("ui", ui).unwrap();

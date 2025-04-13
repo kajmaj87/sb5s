@@ -1,5 +1,5 @@
 use crate::domain::value_object::location::Location;
-use crate::repo::NumericId;
+use utils::repo::NumericId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PersonId(pub u32);

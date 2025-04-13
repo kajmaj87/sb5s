@@ -6,5 +6,5 @@ edition = "2024"
 [dependencies]
 logic = { path = "../logic" }
 parking_lot = "0.12.3"
-mlua = { version = "0.10.3", features = ["luau", "serialize", "send", "error-send"] }
+mlua = { version = "0.10.3", features = ["luau", "async", "serialize", "send", "error-send"] }
 walkdir = "2.5.0"
