@@ -1,5 +1,4 @@
 pub(crate) mod location_occupancy;
-
 use crate::infrastructure::event_store::EventStore;
 use crate::Projection;
 pub use location_occupancy::LocationOccupancyProjection;

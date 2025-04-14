@@ -75,6 +75,7 @@ impl Projection for LocationOccupancyProjection {
                 self.remove_person_from_location(*person_id, from_location);
                 self.add_person_to_location(*person_id, to_location.clone());
             }
+            &DomainEvent::Terrain(_) => {}
         }
     }
 

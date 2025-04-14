@@ -29,7 +29,7 @@ impl EventStore {
     }
 
     pub fn publish(&mut self, event: DomainEvent) {
-        // println!("Event received: {:?}", event);
+        println!("Event received: {:?}", event);
         // Store the event
         self.events.push(event.clone());
 

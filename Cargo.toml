@@ -2,5 +2,5 @@
 members = [
     "pixel_ui",
     "logic",
-    "lua_engine"]
+    "lua_engine", "utils", "utils/derive"]
 resolver = "2"

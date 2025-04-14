@@ -4,8 +4,8 @@ use crate::domain::event::person_event::PersonEvent;
 use crate::domain::event::DomainEvent;
 use crate::domain::value_object::location::Location;
 use crate::infrastructure::event_store::publish_event;
-use crate::repo::Repository;
 use std::sync::mpsc::Sender;
+use utils::repo::Repository;
 
 pub struct PersonService<R: Repository<PersonId, Person>> {
     repository: R,
@@ -87,8 +87,8 @@ impl<R: Repository<PersonId, Person>> PersonService<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::repo::VecRepository;
     use std::sync::mpsc;
+    use utils::repo::VecRepository;
 
     #[test]
     fn test_create_person() {

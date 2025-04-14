@@ -49,9 +49,9 @@ impl DebugWindow {
             let hover_pos =
                 TilePosition::from_world_pos(camera.screen_to_world(input.get_mouse_position()));
 
-            if let Some(tile) = map.get_tile(&hover_pos) {
+            if let Some(tile) = map.get_tile_texture_id(&hover_pos) {
                 debug_texts.push((
-                    format!("Hover: ({}, {}) ID: {}", hover_pos.x, hover_pos.y, tile.id),
+                    format!("Hover: ({}, {}) ID: {}", hover_pos.x, hover_pos.y, tile.0),
                     WHITE,
                 ));
             } else {
@@ -64,9 +64,9 @@ impl DebugWindow {
 
         // Add selected tile info
         if let Some(pos) = selected_pos {
-            if let Some(tile) = map.get_tile(pos) {
+            if let Some(tile) = map.get_tile_texture_id(pos) {
                 debug_texts.push((
-                    format!("Selected: ({}, {}) ID: {}", pos.x, pos.y, tile.id),
+                    format!("Selected: ({}, {}) ID: {}", pos.x, pos.y, tile.0),
                     RED,
                 ));
             }
