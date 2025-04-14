@@ -2,8 +2,10 @@ mod event_api;
 mod location_api;
 mod person_api;
 mod projection_api;
+mod terrain_api;
 
 use crate::domain::service::person_service::PersonService;
+use crate::domain::service::terrain_service::TerrainService;
 use crate::infrastructure::event_store::{create_event_store, EventStore};
 use crate::infrastructure::projection::{LocationOccupancyProjection, ProjectionManager};
 use parking_lot::Mutex;
@@ -12,7 +14,10 @@ use utils::repo::VecRepository;
 
 pub use crate::domain::entity::person::Person;
 use crate::domain::entity::person::PersonId;
+pub use crate::domain::entity::terrain::TerrainTypeId;
+use crate::domain::entity::terrain::{Terrain, TerrainId, TerrainType};
 use crate::domain::event::DomainEvent;
+pub use crate::domain::value_object::location::Location;
 
 /// Main API facade for the logic module
 pub struct CoreApi {
@@ -20,10 +25,22 @@ pub struct CoreApi {
     location: LocationApi,
     event: EventApi,
     projection: ProjectionApi,
+    terrain: TerrainApi,
 }
 /// API for person-related operations
 pub struct PersonApi {
     service: Arc<Mutex<PersonService<VecRepository<PersonId, Person>>>>,
+}
+
+pub struct TerrainApi {
+    service: Arc<
+        Mutex<
+            TerrainService<
+                VecRepository<TerrainId, Terrain>,
+                VecRepository<TerrainTypeId, TerrainType>,
+            >,
+        >,
+    >,
 }
 
 /// API for location-related queries
@@ -69,7 +86,7 @@ impl CoreApi {
         let repo = VecRepository::<PersonId, Person>::new();
 
         // Create the person service
-        let person_service = Arc::new(Mutex::new(PersonService::new(repo, event_sender)));
+        let person_service = Arc::new(Mutex::new(PersonService::new(repo, event_sender.clone())));
 
         // Create the projection manager
         let projection_manager = ProjectionManager::new(event_store.clone());
@@ -78,6 +95,15 @@ impl CoreApi {
         let location_projection =
             projection_manager.register_projection(LocationOccupancyProjection::new());
 
+        // Create the terrain repository
+        let terrain_repo = VecRepository::<TerrainId, Terrain>::new();
+        let terrain_type_repo = VecRepository::<TerrainTypeId, TerrainType>::new();
+        // Create the terrain service
+        let terrain_service = Arc::new(Mutex::new(TerrainService::new(
+            terrain_repo,
+            terrain_type_repo,
+            event_sender.clone(),
+        )));
         // Give the projections a moment to initialize
         std::thread::sleep(std::time::Duration::from_millis(50));
 
@@ -90,6 +116,9 @@ impl CoreApi {
             },
             event: EventApi { store: event_store },
             projection: ProjectionApi { projection_manager },
+            terrain: TerrainApi {
+                service: terrain_service,
+            },
         }
     }
 
@@ -109,5 +138,10 @@ impl CoreApi {
     }
     pub fn projection(&self) -> &ProjectionApi {
         &self.projection
+    }
+
+    /// Access terrain-related operations
+    pub fn terrain(&self) -> &TerrainApi {
+        &self.terrain
     }
 }

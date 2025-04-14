@@ -1,6 +1,6 @@
 use crate::camera::CameraController;
 use crate::input::{InputEventProcessor, InputManager};
-use crate::textures::TextureAtlasManager;
+use crate::textures::{AtlasId, TextureAtlasManager, TextureId};
 use crate::utils::draw_text_with_background;
 use crate::{TileMap, TilePosition};
 use lua_engine::lua_engine::LuaEngine;
@@ -66,7 +66,7 @@ impl LuaUIBindings {
             let input = lua.create_table().unwrap();
             let ui = lua.create_table().unwrap();
             let tile = lua.create_table().unwrap();
-            let atlas = lua.create_table().unwrap();
+            let texture = lua.create_table().unwrap();
             let terrain = lua.create_table().unwrap();
 
             // Register UI components
@@ -85,7 +85,6 @@ impl LuaUIBindings {
                 .and_then(|f| ui.set("fps", f))
                 .unwrap();
 
-            // Register tile hover function
             {
                 let camera = camera.clone();
                 let input_manager = input_manager.clone();
@@ -100,19 +99,36 @@ impl LuaUIBindings {
                 .and_then(|f| tile.set("hovered", f))
                 .unwrap();
             }
-
-            // Register tile lookup function
             {
+                let camera = camera.clone();
+                lua.create_function(move |_, (x, y): (i32, i32)| {
+                    let tile = TilePosition::new(x, y);
+                    let pos = tile.to_world_pos();
+                    Ok((pos.x, pos.y))
+                })
+                .and_then(|f| tile.set("to_world_pos", f))
+                .unwrap();
                 let map = map.clone();
                 lua.create_function(move |_, (x, y): (i32, i32)| {
-                    let binding = map.lock();
-                    let tile = binding.get_tile(&TilePosition::new(x, y));
+                    let map = map.lock();
+                    let tile = map.get_tile_texture_id(&TilePosition::new(x, y));
                     match tile {
-                        Some(tile) => Ok(Some(tile.id)),
+                        Some(tile) => Ok(Some(tile.0)),
                         None => Ok(None),
                     }
                 })
                 .and_then(|f| tile.set("at", f))
+                .unwrap();
+            }
+            {
+                let map = map.clone();
+                lua.create_function(move |_, (texture_id, x, y): (u32, i32, i32)| {
+                    let mut map = map.lock();
+                    let pos = TilePosition::new(x, y);
+                    map.add_tile_to_draw(&pos, TextureId(texture_id));
+                    Ok(())
+                })
+                .and_then(|f| tile.set("draw", f))
                 .unwrap();
             }
 
@@ -197,12 +213,15 @@ impl LuaUIBindings {
             {
                 let atlas_manager = texture_atlas_manager.clone();
                 lua.create_async_function(
-                    move |_, (path, tile_size, width_in_tiles): (String, f32, u32)| {
+                    move |_, (path, tile_size, scale, width_in_tiles): (String, f32, f32, u32)| {
                         let atlas_manager = atlas_manager.clone();
                         async move {
                             let mut manager = atlas_manager.lock();
-                            match manager.create_atlas(&path, tile_size, width_in_tiles).await {
-                                Ok(atlas_id) => Ok(atlas_id),
+                            match manager
+                                .create_atlas(&path, tile_size, scale, width_in_tiles)
+                                .await
+                            {
+                                Ok(atlas_id) => Ok(atlas_id.0),
                                 Err(e) => Err(LuaError::external(format!(
                                     "Failed to create atlas: {}",
                                     e
@@ -211,13 +230,24 @@ impl LuaUIBindings {
                         }
                     },
                 )
-                .and_then(|f| atlas.set("register", f))
+                .and_then(|f| texture.set("register_atlas", f))
+                .unwrap();
+                let atlas_manager = texture_atlas_manager.clone();
+                lua.create_function(move |_, (atlas_id, linear_index): (u32, u32)| {
+                    let mut manager = atlas_manager.lock();
+                    match manager.register_texture_in_atlas(AtlasId(atlas_id), linear_index) {
+                        Ok((texture_id, is_fully_transparent)) => {
+                            Ok((texture_id.0, is_fully_transparent))
+                        }
+                        Err(e) => Err(LuaError::external(e)),
+                    }
+                })
+                .and_then(|f| texture.set("region", f))
                 .unwrap();
             }
 
-            // Set all tables to their parent tables
             ui.set("tile", tile).unwrap();
-            ui.set("atlas", atlas).unwrap();
+            ui.set("texture", texture).unwrap();
 
             // Set ui table to globals
             globals.set("ui", ui).unwrap();

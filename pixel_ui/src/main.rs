@@ -5,6 +5,7 @@ mod input;
 mod lua_ui_integration;
 mod textures;
 
+use macroquad::math::i32;
 use macroquad::prelude::*;
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -12,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::sync::{mpsc, Arc};
 use std::{fs, thread};
+use ::utils::repo::NumericId;
 
 // Constants
 mod config {
@@ -32,8 +34,7 @@ mod config {
     pub const TEXT_PADDING: f32 = 15.0;
     pub const PERSON_SOURCE_TILE_SIZE: f32 = 32.0;
     pub const PERSON_TILE_SIZE: f32 = 32.0;
-    pub const PEOPLE_BENCHMARK_SIZE: usize = 100;
-    pub const BENCHMARK_MAP_SIZE: usize = 1;
+    pub const PEOPLE_BENCHMARK_SIZE: usize = 1000;
     pub const PEOPLE_BENCHMARK_DISPERSION: i32 = 1;
 }
 
@@ -101,16 +102,15 @@ use crate::console::Console;
 use crate::debug::DebugWindow;
 use crate::input::{InputEventProcessor, InputManager};
 use crate::lua_ui_integration::LuaUIBindings;
+use crate::textures::{TextureAtlasManager, TextureId};
 use crate::utils::*;
 use config::*;
 use lua_engine::lua_client::LuaClient;
 use lua_engine::lua_engine::{LuaCommand, LuaEngine};
+use utils_derive::NumericId;
 
-#[derive(Clone)]
-struct Tile {
-    id: usize,
-}
-
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, NumericId)]
+struct TileId(u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TilePosition {
     x: i32,
@@ -166,47 +166,21 @@ impl MapBounds {
 }
 
 struct TileMap {
-    tiles: HashMap<(i32, i32), Tile>,
-    tileset: Texture2D,
+    tiles: HashMap<(i32, i32), TextureId>,
+    texture_atlas_manager: Arc<Mutex<TextureAtlasManager>>,
     visible_tiles_count: usize,
     bounds: MapBounds,
-    tiles_per_row: f32,
 }
 
 impl TileMap {
-    async fn new() -> Self {
-        let tileset = load_texture("assets/tileset.png").await.unwrap();
-        tileset.set_filter(FilterMode::Nearest);
-
-        let tiles_per_row = (tileset.width() / SOURCE_TILE_SIZE).floor();
-        let width = 16;
-        let height = 16;
-        let mut tiles = HashMap::new();
-
-        for y in 0..height * BENCHMARK_MAP_SIZE {
-            for x in 0..width * BENCHMARK_MAP_SIZE {
-                tiles.insert(
-                    (x as i32, y as i32),
-                    Tile {
-                        id: (x + y * height) % 256,
-                    },
-                );
-            }
-        }
-
-        let bounds = MapBounds::new(
-            0,
-            0,
-            (width * BENCHMARK_MAP_SIZE - 1) as i32,
-            (height * BENCHMARK_MAP_SIZE - 1) as i32,
-        );
+    fn new(texture_atlas_manager: Arc<Mutex<TextureAtlasManager>>) -> Self {
+        let bounds = MapBounds::new(0, 0, 0, 0);
 
         Self {
-            tiles,
-            tileset,
+            tiles: HashMap::new(),
+            texture_atlas_manager,
             visible_tiles_count: 0,
             bounds,
-            tiles_per_row,
         }
     }
 
@@ -235,12 +209,6 @@ impl TileMap {
     fn draw(&mut self, camera: &CameraController, selected_pos: Option<&TilePosition>) {
         let (min_x, min_y, max_x, max_y) = self.get_visible_range(camera);
 
-        // Skip drawing if nothing is visible
-        if max_x < min_x || max_y < min_y {
-            self.visible_tiles_count = 0;
-            return;
-        }
-
         // Collect visible tiles
         let mut tiles_to_draw = Vec::new();
         for x in (min_x - TILE_BUFFER).max(self.bounds.min_x)
@@ -256,38 +224,27 @@ impl TileMap {
         }
 
         // Sort by ID for better rendering efficiency
-        tiles_to_draw.sort_by_key(|(_, tile)| tile.id);
+        tiles_to_draw.sort_by_key(|(_, tile)| tile.0);
         self.visible_tiles_count = tiles_to_draw.len();
 
         // Draw tiles
         for (pos, tile) in tiles_to_draw {
-            let src_x = (tile.id as f32 % self.tiles_per_row) * SOURCE_TILE_SIZE;
-            let src_y = (tile.id as f32 / self.tiles_per_row).floor() * SOURCE_TILE_SIZE;
-
             let is_selected =
                 selected_pos.is_some_and(|sel_pos| pos.x == sel_pos.x && pos.y == sel_pos.y);
             let color = if is_selected { MAGENTA } else { WHITE };
-
-            draw_texture_ex(
-                &self.tileset,
-                pos.x as f32 * TILE_SIZE,
-                pos.y as f32 * TILE_SIZE,
-                color,
-                DrawTextureParams {
-                    source: Some(Rect::new(src_x, src_y, SOURCE_TILE_SIZE, SOURCE_TILE_SIZE)),
-                    dest_size: Some(Vec2::new(TILE_SIZE, TILE_SIZE)),
-                    ..Default::default()
-                },
-            );
+            let screen_pos = pos.to_world_pos();
+            self.texture_atlas_manager
+                .lock()
+                .draw_texture(tile, screen_pos.x, screen_pos.y, color);
         }
     }
 
-    fn get_tile(&self, pos: &TilePosition) -> Option<&Tile> {
+    fn get_tile_texture_id(&self, pos: &TilePosition) -> Option<&TextureId> {
         self.tiles.get(&(pos.x, pos.y))
     }
 
-    fn place_tile(&mut self, pos: &TilePosition, tile_id: usize) {
-        self.tiles.insert((pos.x, pos.y), Tile { id: tile_id });
+    fn add_tile_to_draw(&mut self, pos: &TilePosition, texture_id: TextureId) {
+        self.tiles.insert((pos.x, pos.y), texture_id);
         self.bounds.expand_to_include(pos);
     }
 
@@ -389,7 +346,7 @@ enum PersonState {
 
 struct Person {
     position: Vec2,                    // Current world position
-    texture: Texture2D,                // Person texture
+    texture: usize,                    // Person texture
     tile_pos: TilePosition,            // Current tile position
     start_pos: Vec2,                   // Starting position for movement
     target_pos: Option<Vec2>,          // Target world position for movement
@@ -403,12 +360,17 @@ struct Person {
 }
 
 impl Person {
-    fn new(tile_x: i32, tile_y: i32, direction: Direction, texture: Texture2D) -> Self {
+    fn new(
+        tile_x: i32,
+        tile_y: i32,
+        direction: Direction,
+        texture: usize,
+        tiles_per_row: i32,
+    ) -> Self {
         let tile_pos = TilePosition::new(tile_x, tile_y);
         let position = tile_pos.to_world_pos() + Vec2::new(TILE_SIZE / 2.0, TILE_SIZE / 2.0);
 
         // Calculate tiles_per_row based on texture width
-        let tiles_per_row = (texture.width() / PERSON_SOURCE_TILE_SIZE) as i32;
 
         // Get animation frames for the initial direction
         let frames = direction.get_animation_frames(tiles_per_row);
@@ -521,7 +483,7 @@ impl Person {
         self.move_timer = 0.0;
     }
 
-    fn draw(&self) {
+    fn draw(&self, textures: &Vec<Texture2D>) {
         // Get current frame tile ID
         let tile_id = self.animation.get_current_frame();
 
@@ -531,7 +493,7 @@ impl Person {
 
         // Draw person
         draw_texture_ex(
-            &self.texture,
+            &textures[self.texture],
             self.position.x - PERSON_TILE_SIZE / 2.0,
             self.position.y - PERSON_TILE_SIZE / 2.0,
             WHITE,
@@ -549,70 +511,6 @@ impl Person {
     }
 }
 
-struct UI {}
-
-impl UI {
-    fn new() -> Self {
-        Self {}
-    }
-
-    fn draw_selected_tile_preview(&self, selected_pos: Option<&TilePosition>, map: &TileMap) {
-        if let Some(pos) = selected_pos {
-            if let Some(tile) = map.get_tile(pos) {
-                let preview_size = TILE_SIZE * SELECTED_TILE_ZOOM;
-                let pos_x = screen_width() - preview_size - 20.0;
-                let pos_y = 20.0;
-
-                // Background
-                draw_rectangle(
-                    pos_x - 10.0,
-                    pos_y - 10.0,
-                    preview_size + 20.0,
-                    preview_size + 20.0,
-                    Color::new(0.0, 0.0, 0.0, 0.7),
-                );
-
-                // Tile image
-                let src_x = (tile.id as f32 % map.tiles_per_row) * SOURCE_TILE_SIZE;
-                let src_y = (tile.id as f32 / map.tiles_per_row).floor() * SOURCE_TILE_SIZE;
-
-                draw_texture_ex(
-                    &map.tileset,
-                    pos_x,
-                    pos_y,
-                    WHITE,
-                    DrawTextureParams {
-                        source: Some(Rect::new(src_x, src_y, SOURCE_TILE_SIZE, SOURCE_TILE_SIZE)),
-                        dest_size: Some(Vec2::new(preview_size, preview_size)),
-                        ..Default::default()
-                    },
-                );
-
-                // Border
-                draw_rectangle_lines(pos_x, pos_y, preview_size, preview_size, 2.0, RED);
-
-                // Tile info
-                draw_text(
-                    &format!("Tile ID: {}", tile.id),
-                    pos_x,
-                    pos_y + preview_size + 20.0,
-                    20.0,
-                    WHITE,
-                );
-            }
-        }
-    }
-
-    fn draw_instructions(&self) {
-        draw_text_with_background(
-            "WASD/Arrows: move, Mouse wheel: zoom, Left-click drag: pan, Left-click: select, Right-click/drag: place tiles",
-            10.0,
-            screen_height() - 30.0,
-            WHITE,
-        );
-    }
-}
-
 // Define a UI state enum to track the current mode
 #[derive(PartialEq)]
 enum UIState {
@@ -625,7 +523,6 @@ struct GameState {
     camera: Arc<Mutex<CameraController>>,
     input: Arc<Mutex<InputManager>>,
     input_event_processor: Arc<Mutex<InputEventProcessor>>,
-    ui: UI,
     debug: DebugWindow,
     selected_pos: Option<TilePosition>,
     people: Vec<Person>,
@@ -642,12 +539,11 @@ impl GameState {
     async fn new(command_tx: Sender<LuaCommand>, lua_engine: Arc<Mutex<LuaEngine>>) -> Self {
         // Create the client that the game state will use
         let lua_client = Arc::new(Mutex::new(LuaClient::new(command_tx.clone())));
-        let map = Arc::new(Mutex::new(TileMap::new().await));
-        let initial_center = { map.lock().get_initial_center() };
-        let camera = Arc::new(Mutex::new(CameraController::new(initial_center)));
+        let texture_atlas_manager = Arc::new(Mutex::new(TextureAtlasManager::new()));
+        let map = Arc::new(Mutex::new(TileMap::new(texture_atlas_manager.clone())));
+        let camera = Arc::new(Mutex::new(CameraController::new(Vec2::new(0.0, 0.0))));
         let input = Arc::new(Mutex::new(InputManager::new()));
         let input_event_processor = Arc::new(Mutex::new(InputEventProcessor::new()));
-        let texture_atlas_manager = Arc::new(Mutex::new(textures::TextureAtlasManager::new()));
         let lua_ui = LuaUIBindings::new(
             lua_engine.clone(),
             camera.clone(),
@@ -683,7 +579,6 @@ impl GameState {
             if !character_textures.is_empty() {
                 // Select random texture
                 let texture_index = rand::gen_range(0, character_textures.len());
-                let texture = character_textures[texture_index].clone();
 
                 // Random direction
                 let direction = match rand::gen_range(0, 4) {
@@ -693,7 +588,15 @@ impl GameState {
                     _ => Direction::Right,
                 };
 
-                people.push(Person::new(tile_x, tile_y, direction, texture));
+                let tiles_per_row =
+                    (character_textures[texture_index].width() / PERSON_SOURCE_TILE_SIZE) as i32;
+                people.push(Person::new(
+                    tile_x,
+                    tile_y,
+                    direction,
+                    texture_index,
+                    tiles_per_row,
+                ));
             }
         }
 
@@ -702,7 +605,6 @@ impl GameState {
             camera: camera.clone(),
             input: input.clone(),
             input_event_processor: input_event_processor.clone(),
-            ui: UI::new(),
             debug: DebugWindow::new(),
             selected_pos: None,
             people,
@@ -785,7 +687,7 @@ impl GameState {
             // Check if tile exists with lock
             let tile_exists = {
                 let map = self.map.lock();
-                map.get_tile(&hover_pos).is_some()
+                map.get_tile_texture_id(&hover_pos).is_some()
             };
 
             if tile_exists {
@@ -796,31 +698,6 @@ impl GameState {
 
         // Handle actions based on UI state
         match self.ui_state {
-            UIState::TileCreation => {
-                // Check conditions for tile placement
-                let should_place_tile;
-                {
-                    let input = self.input.lock();
-                    should_place_tile = input.should_place_tile(self.selected_pos.as_ref());
-                }
-
-                // Handle tile placement
-                if should_place_tile {
-                    if let Some(selected_pos) = &self.selected_pos {
-                        // Get the tile ID from the selected position
-                        let selected_tile_id = {
-                            let map = self.map.lock();
-                            map.get_tile(selected_pos).map(|tile| tile.id)
-                        };
-
-                        // Place the tile if we found a valid ID
-                        if let Some(tile_id) = selected_tile_id {
-                            let mut map = self.map.lock();
-                            map.place_tile(&hover_pos, tile_id);
-                        }
-                    }
-                }
-            }
             UIState::PeopleCreation => {
                 // Handle person creation with dragging - now purely distance-based
                 if is_mouse_button_down(MouseButton::Right) {
@@ -844,13 +721,13 @@ impl GameState {
                     self.last_person_pos = None;
                 }
             }
+            UIState::TileCreation => {}
         }
     }
 
     fn add_person_at_position(&mut self, tile_pos: TilePosition, world_pos: Vec2) {
         if !self.character_textures.is_empty() {
             let texture_index = rand::gen_range(0, self.character_textures.len());
-            let texture = self.character_textures[texture_index].clone();
 
             // Random direction
             let random_dir = match rand::gen_range(0, 4) {
@@ -861,7 +738,15 @@ impl GameState {
             };
 
             // Create person and set position directly to mouse position
-            let mut person = Person::new(tile_pos.x, tile_pos.y, random_dir, texture);
+            let tiles_per_row =
+                (self.character_textures[texture_index].width() / PERSON_SOURCE_TILE_SIZE) as i32;
+            let mut person = Person::new(
+                tile_pos.x,
+                tile_pos.y,
+                random_dir,
+                texture_index,
+                tiles_per_row,
+            );
             person.position = world_pos;
 
             // Add to people list
@@ -884,7 +769,7 @@ impl GameState {
             }
 
             for person in &self.people {
-                person.draw(); // Using the updated draw method without tiles_per_row
+                person.draw(&self.character_textures); // Using the updated draw method without tiles_per_row
             }
 
             // Highlight hovered tile if not dragging (only in debug mode)
@@ -900,14 +785,6 @@ impl GameState {
 
         // Draw UI (always visible)
         set_default_camera();
-        self.ui.draw_instructions();
-
-        // Draw tile preview with locked map
-        {
-            let map = self.map.lock();
-            self.ui
-                .draw_selected_tile_preview(self.selected_pos.as_ref(), &map);
-        }
 
         // Display mode-specific message
         match self.ui_state {
@@ -985,6 +862,8 @@ fn visit_dirs(dir: &Path, paths: &mut Vec<PathBuf>) -> std::io::Result<()> {
 
 #[macroquad::main("Space Business 5 2nd Edition")]
 async fn main() {
+    // this has to be done before any textures are loaded
+    build_textures_atlas();
     let (command_tx, command_rx) = mpsc::channel();
     let lua_engine = Arc::new(Mutex::new(LuaEngine::new(command_rx)));
     let mut game = GameState::new(command_tx, lua_engine.clone()).await;

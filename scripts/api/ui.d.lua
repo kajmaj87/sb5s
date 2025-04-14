@@ -1,5 +1,5 @@
 ---@class ui UI namespace for Rust engine bindings
----@field atlas ui.atlas Texture atlas management functionality
+---@field texture ui.texture Texture atlas management functionality
 ---@field input ui.input Input handling functionality
 ---@field terrain ui.terrain Terrain-related functionality
 ---@field tile ui.tile Tile-related functionality

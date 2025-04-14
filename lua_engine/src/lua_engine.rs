@@ -1,7 +1,8 @@
 use crate::hot_reload::SimpleHotReloader;
 use logic::domain::event::person_event::PersonEvent;
+use logic::domain::event::terrain_events::TerrainEvent;
 use logic::domain::event::*;
-use logic::{CoreApi, Projection};
+use logic::{CoreApi, Location, Projection, TerrainTypeId};
 use mlua::{Function, IntoLuaMulti, Lua, MultiValue, Table, Value};
 use parking_lot::{Mutex, RwLock};
 use std::path::Path;
@@ -53,7 +54,7 @@ impl IntoLuaMulti for LuaEvent {
                         name,
                         location,
                     } => {
-                        table.set("event_type", "PersonCreated")?;
+                        table.set("type", "PersonCreated")?;
                         table.set("person_id", person_id.0)?; // Assuming PersonId has a field '0'
                         table.set("name", name)?;
                         table.set("x", location.x)?;
@@ -64,7 +65,7 @@ impl IntoLuaMulti for LuaEvent {
                         from_location,
                         to_location,
                     } => {
-                        table.set("event_type", "PersonMoved")?;
+                        table.set("type", "PersonMoved")?;
                         table.set("person_id", person_id.0)?;
 
                         // Create nested tables for from/to locations
@@ -84,7 +85,38 @@ impl IntoLuaMulti for LuaEvent {
                 values.push_front(table_value);
 
                 Ok(values)
-            } // Add other DomainEvent variants here as needed
+            }
+            DomainEvent::Terrain(event) => match event {
+                TerrainEvent::TerrainTypeCreated {
+                    terrain_type_id,
+                    movement_cost,
+                } => {
+                    let table = lua.create_table()?;
+                    table.set("type", "TerrainTypeCreated")?;
+                    table.set("id", terrain_type_id.0)?;
+                    table.set("movement_cost", movement_cost)?;
+                    let table_value = Value::Table(table);
+                    let mut values = MultiValue::new();
+                    values.push_front(table_value);
+                    Ok(values)
+                }
+                TerrainEvent::TerrainCreated {
+                    terrain_id,
+                    terrain_type_id,
+                    location,
+                } => {
+                    let table = lua.create_table()?;
+                    table.set("type", "TerrainCreated")?;
+                    table.set("id", terrain_id.0)?;
+                    table.set("terrain_type_id", terrain_type_id.0)?;
+                    table.set("x", location.x)?;
+                    table.set("y", location.y)?;
+                    let table_value = Value::Table(table);
+                    let mut values = MultiValue::new();
+                    values.push_front(table_value);
+                    Ok(values)
+                }
+            },
         }
     }
 }
@@ -135,12 +167,14 @@ impl LuaEngine {
         let location_table = lua.create_table().unwrap();
         let event_table = lua.create_table().unwrap();
         let projection_table = lua.create_table().unwrap();
+        let terrain_table = lua.create_table().unwrap();
 
         // Setup the APIs
         Self::setup_person_api(&lua, &person_table, Arc::clone(&core));
         Self::setup_location_api(&lua, &location_table, Arc::clone(&core));
         Self::setup_event_api(&lua, &event_table, Arc::clone(&core));
         Self::setup_projection_api(&lua, &projection_table, Arc::clone(&core));
+        Self::setup_terrain_api(&lua, &terrain_table, Arc::clone(&core));
 
         // Create main API table
         let api_table = lua.create_table().unwrap();
@@ -148,6 +182,7 @@ impl LuaEngine {
         api_table.set("location", location_table).unwrap();
         api_table.set("event", event_table).unwrap();
         api_table.set("projection", projection_table).unwrap();
+        api_table.set("terrain", terrain_table).unwrap();
 
         // Set API as global
         globals.set("api", api_table).unwrap();
@@ -310,8 +345,37 @@ impl LuaEngine {
         table.set("get_all", get_all_persons).unwrap();
     }
 
+    fn setup_terrain_api(lua: &Lua, table: &Table, core: Arc<RwLock<CoreApi>>) {
+        let core_clone = Arc::clone(&core);
+        let create_terrain_type = lua
+            .create_function(move |lua_ctx, movement_cost: f32| {
+                match core_clone
+                    .read()
+                    .terrain()
+                    .register_terrain_type(movement_cost)
+                {
+                    Ok(terrain_type) => Ok(terrain_type.0),
+                    Err(e) => Err(mlua::Error::RuntimeError(e)),
+                }
+            })
+            .unwrap();
+        table.set("register", create_terrain_type).unwrap();
+        let core_clone = Arc::clone(&core);
+        let create_terrain = lua
+            .create_function(move |_, (terrain_type_id, x, y): (u32, i32, i32)| {
+                match core_clone
+                    .read()
+                    .terrain()
+                    .set_terrain(TerrainTypeId(terrain_type_id), Location { x, y })
+                {
+                    Ok(terrain) => Ok(terrain.0),
+                    Err(e) => Err(mlua::Error::RuntimeError(e)),
+                }
+            })
+            .unwrap();
+        table.set("set", create_terrain).unwrap();
+    }
     fn setup_location_api(lua: &Lua, table: &Table, core: Arc<RwLock<CoreApi>>) {
-        // Expose api.location.get_people_at to Lua
         let core_clone = Arc::clone(&core);
         let get_people_at = lua
             .create_function(move |lua_ctx, (x, y): (i32, i32)| {
@@ -329,7 +393,6 @@ impl LuaEngine {
             .unwrap();
         table.set("get_people_at", get_people_at).unwrap();
 
-        // Expose api.location.get_occupied to Lua
         let core_clone = Arc::clone(&core);
         let get_occupied = lua
             .create_function(move |lua_ctx, ()| {
@@ -351,7 +414,6 @@ impl LuaEngine {
             .unwrap();
         table.set("get_occupied", get_occupied).unwrap();
 
-        // Expose api.location.most_crowded to Lua
         let core_clone = Arc::clone(&core);
         let most_crowded = lua
             .create_function(move |_, ()| {
@@ -364,7 +426,6 @@ impl LuaEngine {
             .unwrap();
         table.set("most_crowded", most_crowded).unwrap();
 
-        // Expose api.location.occupied_count to Lua
         let core_clone = Arc::clone(&core);
         let occupied_count = lua
             .create_function(move |_, ()| {
@@ -376,7 +437,6 @@ impl LuaEngine {
     }
 
     fn setup_event_api(lua: &Lua, table: &Table, core: Arc<RwLock<CoreApi>>) {
-        // Expose api.event.count to Lua
         let core_clone = Arc::clone(&core);
         let event_count = lua
             .create_function(move |_, ()| {

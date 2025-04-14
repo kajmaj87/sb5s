@@ -39,6 +39,23 @@ impl<ID: NumericId, T: Clone> Repository<ID, T> for VecRepository<ID, T> {
         Ok(id)
     }
 
+    fn contains(&self, id: ID) -> Result<bool, Self::Error> {
+        let index = id.value() as usize;
+        Ok(index < self.data.len() && self.data[index].is_some())
+    }
+
+    fn insert(&mut self, id: ID, entity: T) -> Result<T, Self::Error> {
+        let index = id.value() as usize;
+        if index >= self.data.len() {
+            self.data.resize_with(index + 1, || None);
+        }
+
+        match self.data[index].replace(entity) {
+            Some(old_entity) => Ok(old_entity),
+            None => Err(VecRepositoryError::NotFound),
+        }
+    }
+
     fn remove(&mut self, id: ID) -> Result<T, Self::Error> {
         let index = id.value() as usize;
         if index >= self.data.len() {
@@ -84,20 +101,11 @@ impl<ID: NumericId, T: Clone> Repository<ID, T> for VecRepository<ID, T> {
 mod tests {
     use super::*;
     use crate::repo::NumericId;
+    use utils_derive::NumericId;
 
     // Define a test ID type that implements NumericId
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, NumericId)]
     struct TestId(u32);
-
-    impl NumericId for TestId {
-        fn value(&self) -> u32 {
-            self.0
-        }
-
-        fn from_value(value: u32) -> Self {
-            TestId(value)
-        }
-    }
 
     // Helper function to create a repository for strings with TestId
     fn create_string_repo() -> VecRepository<TestId, String> {
